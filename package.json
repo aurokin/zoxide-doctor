@@ -1,0 +1,26 @@
+{
+  "name": "zoxide-doctor",
+  "version": "0.1.0",
+  "description": "A small LLM-powered doctor for bad zoxide jumps.",
+  "type": "module",
+  "bin": {
+    "zdr": "./dist/zdr"
+  },
+  "scripts": {
+    "check": "bun run tsc --noEmit",
+    "start": "bun run src/cli.ts",
+    "build": "bun build src/cli.ts --compile --outfile dist/zdr",
+    "smoke": "bun run src/cli.ts --version"
+  },
+  "dependencies": {
+    "@earendil-works/pi-ai": "^0.74.0"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.3.4",
+    "typescript": "^5.9.3"
+  },
+  "trustedDependencies": [
+    "@google/genai",
+    "protobufjs"
+  ]
+}
