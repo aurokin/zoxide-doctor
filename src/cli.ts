@@ -1,7 +1,9 @@
 #!/usr/bin/env bun
 
 import packageJson from "../package.json" with { type: "json" };
+import { buildCandidates } from "./candidates.js";
 import { finishZAttempt, readLastZState, recordZAttempt } from "./shell-state.js";
+import { loadZoxideEntries } from "./zoxide.js";
 
 type CommandResult = {
   code: number;
@@ -36,6 +38,8 @@ async function main(argv: string[]): Promise<CommandResult> {
       return finishZCommand(args);
     case "debug-state":
       return debugStateCommand();
+    case "debug-candidates":
+      return debugCandidatesCommand(args);
     case "provider-smoke":
       return providerSmokeCommand(args);
     default:
@@ -104,6 +108,46 @@ async function debugStateCommand(): Promise<CommandResult> {
   return { code: 0 };
 }
 
+async function debugCandidatesCommand(args: string[]): Promise<CommandResult> {
+  const limit = parseLimit(args);
+  if (!limit.ok) {
+    console.error(`zdr: ${limit.error}`);
+    return { code: 2 };
+  }
+
+  const state = await readLastZState();
+  if (!state) {
+    console.error("zdr: no recorded z attempt found");
+    return { code: 1 };
+  }
+
+  try {
+    const entries = await loadZoxideEntries();
+    const candidates = buildCandidates({
+      state,
+      entries,
+      limit: limit.value,
+    });
+    console.log(
+      JSON.stringify(
+        {
+          query: state.query_argv.join(" "),
+          before_pwd: state.before_pwd,
+          after_pwd: state.after_pwd,
+          candidate_count: candidates.length,
+          candidates,
+        },
+        null,
+        2,
+      ),
+    );
+    return { code: 0 };
+  } catch (error) {
+    console.error(`zdr: ${error instanceof Error ? error.message : String(error)}`);
+    return { code: 1 };
+  }
+}
+
 function placeholderCommand(name: string): CommandResult {
   console.error(`zdr: ${name} is not implemented yet`);
   return { code: 2 };
@@ -124,6 +168,8 @@ Usage:
   zdr record-z        Internal shell-state command
   zdr finish-z        Internal shell-state command
   zdr debug-state     Print recorded z state
+  zdr debug-candidates
+                      Print candidate list for the recorded z state
   zdr provider-smoke  Verify Pi/OpenRouter import and model lookup
   zdr provider-smoke --live
                       Make a tiny live OpenRouter completion
@@ -158,7 +204,7 @@ function zshInitScript(): string {
     "",
     "zdr() {",
     "  case \"$1\" in",
-    "    init|record-z|finish-z|debug-state|provider-smoke|--*|-*)",
+    "    init|record-z|finish-z|debug-state|debug-candidates|provider-smoke|--*|-*)",
     "      command zdr \"$@\"",
     "      return $?",
     "      ;;",
@@ -254,6 +300,29 @@ function parseRecordZArgs(args: string[]): RecordZArgs {
     queryArgv,
     ...(shell ? { shell } : {}),
   };
+}
+
+type LimitArgs = { ok: true; value: number } | { ok: false; error: string };
+
+function parseLimit(args: string[]): LimitArgs {
+  let value = 50;
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+    if (arg === "--limit") {
+      const raw = args[index + 1];
+      if (!raw) {
+        return { ok: false, error: "debug-candidates requires a value after --limit" };
+      }
+      value = Number.parseInt(raw, 10);
+      index += 1;
+      continue;
+    }
+    return { ok: false, error: `unknown debug-candidates argument: ${arg ?? ""}` };
+  }
+  if (!Number.isInteger(value) || value < 1 || value > 200) {
+    return { ok: false, error: "debug-candidates --limit must be between 1 and 200" };
+  }
+  return { ok: true, value };
 }
 
 type FinishZArgs =

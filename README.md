@@ -24,11 +24,11 @@ Implemented:
   - `zdr record-z`
   - `zdr finish-z`
   - `zdr debug-state`
+- zoxide DB loading and local candidate scoring with `zdr debug-candidates`.
 
 Not implemented yet:
 
 - no-arg recovery mode.
-- candidate generation from the zoxide DB.
 - LLM path selection.
 - direct lookup correction memory.
 - escalation and picker fallback.
@@ -69,4 +69,15 @@ tmp=$(mktemp -d)
 XDG_STATE_HOME="$tmp" bun run src/cli.ts record-z --attempt smoke-1 --before /tmp/before --shell zsh -- ascan
 XDG_STATE_HOME="$tmp" bun run src/cli.ts finish-z --attempt smoke-1 --after /tmp/after --status 0
 XDG_STATE_HOME="$tmp" bun run src/cli.ts debug-state
+```
+
+## Candidate Smoke Test
+
+This requires `zoxide` to be installed and populated.
+
+```bash
+tmp=$(mktemp -d)
+XDG_STATE_HOME="$tmp" bun run src/cli.ts record-z --attempt smoke-1 --before "$PWD" --shell zsh -- ascan
+XDG_STATE_HOME="$tmp" bun run src/cli.ts finish-z --attempt smoke-1 --after "$PWD" --status 0
+XDG_STATE_HOME="$tmp" bun run src/cli.ts debug-candidates --limit 10
 ```
