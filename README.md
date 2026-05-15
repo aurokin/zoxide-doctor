@@ -25,11 +25,11 @@ Implemented:
   - `zdr finish-z`
   - `zdr debug-state`
 - zoxide DB loading and local candidate scoring with `zdr debug-candidates`.
+- model-backed candidate selection with `zdr debug-select`.
 
 Not implemented yet:
 
 - no-arg recovery mode.
-- LLM path selection.
 - direct lookup correction memory.
 - escalation and picker fallback.
 
@@ -80,4 +80,10 @@ tmp=$(mktemp -d)
 XDG_STATE_HOME="$tmp" bun run src/cli.ts record-z --attempt smoke-1 --before "$PWD" --shell zsh -- ascan
 XDG_STATE_HOME="$tmp" bun run src/cli.ts finish-z --attempt smoke-1 --after "$PWD" --status 0
 XDG_STATE_HOME="$tmp" bun run src/cli.ts debug-candidates --limit 10
+```
+
+Run a live model selection against those candidates:
+
+```bash
+OPENROUTER_API_KEY=... XDG_STATE_HOME="$tmp" bun run src/cli.ts debug-select --limit 10
 ```

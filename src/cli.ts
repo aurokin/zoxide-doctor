@@ -40,6 +40,8 @@ async function main(argv: string[]): Promise<CommandResult> {
       return debugStateCommand();
     case "debug-candidates":
       return debugCandidatesCommand(args);
+    case "debug-select":
+      return debugSelectCommand(args);
     case "provider-smoke":
       return providerSmokeCommand(args);
     default:
@@ -148,6 +150,50 @@ async function debugCandidatesCommand(args: string[]): Promise<CommandResult> {
   }
 }
 
+async function debugSelectCommand(args: string[]): Promise<CommandResult> {
+  const limit = parseLimit(args);
+  if (!limit.ok) {
+    console.error(`zdr: ${limit.error}`);
+    return { code: 2 };
+  }
+
+  const state = await readLastZState();
+  if (!state) {
+    console.error("zdr: no recorded z attempt found");
+    return { code: 1 };
+  }
+
+  try {
+    const entries = await loadZoxideEntries();
+    const candidates = buildCandidates({
+      state,
+      entries,
+      limit: limit.value,
+    });
+    const { selectCandidate } = await import("./provider/select.js");
+    const result = await selectCandidate({ state, candidates });
+    console.log(
+      JSON.stringify(
+        {
+          query: state.query_argv.join(" "),
+          selected_candidate_id: result.selection.candidate_id,
+          confidence: result.selection.confidence,
+          reason: result.selection.reason,
+          candidate: result.candidate,
+          usage: result.usage,
+          raw_text: result.raw_text,
+        },
+        null,
+        2,
+      ),
+    );
+    return { code: 0 };
+  } catch (error) {
+    console.error(`zdr: ${error instanceof Error ? error.message : String(error)}`);
+    return { code: 1 };
+  }
+}
+
 function placeholderCommand(name: string): CommandResult {
   console.error(`zdr: ${name} is not implemented yet`);
   return { code: 2 };
@@ -170,6 +216,7 @@ Usage:
   zdr debug-state     Print recorded z state
   zdr debug-candidates
                       Print candidate list for the recorded z state
+  zdr debug-select   Ask the model to select from recorded candidates
   zdr provider-smoke  Verify Pi/OpenRouter import and model lookup
   zdr provider-smoke --live
                       Make a tiny live OpenRouter completion
@@ -204,7 +251,7 @@ function zshInitScript(): string {
     "",
     "zdr() {",
     "  case \"$1\" in",
-    "    init|record-z|finish-z|debug-state|debug-candidates|provider-smoke|--*|-*)",
+    "    init|record-z|finish-z|debug-state|debug-candidates|debug-select|provider-smoke|--*|-*)",
     "      command zdr \"$@\"",
     "      return $?",
     "      ;;",
@@ -311,7 +358,7 @@ function parseLimit(args: string[]): LimitArgs {
     if (arg === "--limit") {
       const raw = args[index + 1];
       if (!raw) {
-        return { ok: false, error: "debug-candidates requires a value after --limit" };
+        return { ok: false, error: "limit requires a value after --limit" };
       }
       value = Number.parseInt(raw, 10);
       index += 1;
@@ -320,7 +367,7 @@ function parseLimit(args: string[]): LimitArgs {
     return { ok: false, error: `unknown debug-candidates argument: ${arg ?? ""}` };
   }
   if (!Number.isInteger(value) || value < 1 || value > 200) {
-    return { ok: false, error: "debug-candidates --limit must be between 1 and 200" };
+    return { ok: false, error: "--limit must be between 1 and 200" };
   }
   return { ok: true, value };
 }
