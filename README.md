@@ -26,10 +26,10 @@ Implemented:
   - `zdr debug-state`
 - zoxide DB loading and local candidate scoring with `zdr debug-candidates`.
 - model-backed candidate selection with `zdr debug-select`.
+- no-arg recovery mode that prints the selected path to stdout.
 
 Not implemented yet:
 
-- no-arg recovery mode.
 - direct lookup correction memory.
 - escalation and picker fallback.
 
@@ -86,4 +86,10 @@ Run a live model selection against those candidates:
 
 ```bash
 OPENROUTER_API_KEY=... XDG_STATE_HOME="$tmp" bun run src/cli.ts debug-select --limit 10
+```
+
+Run no-arg recovery. stdout is path-only so the shell wrapper can `cd` safely:
+
+```bash
+OPENROUTER_API_KEY=... XDG_STATE_HOME="$tmp" bun run src/cli.ts
 ```

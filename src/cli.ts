@@ -20,8 +20,7 @@ async function main(argv: string[]): Promise<CommandResult> {
   }
 
   if (!command) {
-    console.error("zdr: recovery mode is not implemented yet");
-    return { code: 2 };
+    return recoverCommand();
   }
 
   if (command === "--version" || command === "-V") {
@@ -157,21 +156,8 @@ async function debugSelectCommand(args: string[]): Promise<CommandResult> {
     return { code: 2 };
   }
 
-  const state = await readLastZState();
-  if (!state) {
-    console.error("zdr: no recorded z attempt found");
-    return { code: 1 };
-  }
-
   try {
-    const entries = await loadZoxideEntries();
-    const candidates = buildCandidates({
-      state,
-      entries,
-      limit: limit.value,
-    });
-    const { selectCandidate } = await import("./provider/select.js");
-    const result = await selectCandidate({ state, candidates });
+    const { state, result } = await runSelection(limit.value);
     console.log(
       JSON.stringify(
         {
@@ -194,6 +180,38 @@ async function debugSelectCommand(args: string[]): Promise<CommandResult> {
   }
 }
 
+async function recoverCommand(): Promise<CommandResult> {
+  try {
+    const { result } = await runSelection(50);
+    if (!result.candidate) {
+      console.error(result.selection.reason ? `zdr: ${result.selection.reason}` : "zdr: no candidate selected");
+      return { code: 1 };
+    }
+    console.log(result.candidate.path);
+    return { code: 0 };
+  } catch (error) {
+    console.error(`zdr: ${error instanceof Error ? error.message : String(error)}`);
+    return { code: 1 };
+  }
+}
+
+async function runSelection(limit: number) {
+  const state = await readLastZState();
+  if (!state) {
+    throw new Error("no recorded z attempt found");
+  }
+
+  const entries = await loadZoxideEntries();
+  const candidates = buildCandidates({
+    state,
+    entries,
+    limit,
+  });
+  const { selectCandidate } = await import("./provider/select.js");
+  const result = await selectCandidate({ state, candidates });
+  return { state, candidates, result };
+}
+
 function placeholderCommand(name: string): CommandResult {
   console.error(`zdr: ${name} is not implemented yet`);
   return { code: 2 };
@@ -208,7 +226,7 @@ function printHelp(): void {
   console.log(`zdr ${VERSION}
 
 Usage:
-  zdr                 Repair the last bad zoxide jump (not implemented yet)
+  zdr                 Repair the last bad zoxide jump
   zdr <query>         Direct lookup mode (not implemented yet)
   zdr init zsh        Print zsh integration (placeholder)
   zdr record-z        Internal shell-state command
