@@ -44,7 +44,7 @@ bun install
 Run checks:
 
 ```bash
-bun run check
+bun run verify
 bun run smoke
 bun run src/cli.ts provider-smoke
 ```
