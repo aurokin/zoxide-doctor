@@ -2,6 +2,7 @@
 
 import packageJson from "../package.json" with { type: "json" };
 import { buildCandidates } from "./candidates.js";
+import { lookupCorrection } from "./corrections.js";
 import {
   clearRecoveryRetry,
   finishZAttempt,
@@ -18,7 +19,7 @@ type CommandResult = {
 
 const VERSION = packageJson.version;
 
-async function main(argv: string[]): Promise<CommandResult> {
+export async function main(argv: string[]): Promise<CommandResult> {
   const [command, ...args] = argv;
 
   if (command === "--help" || command === "-h") {
@@ -57,7 +58,7 @@ async function main(argv: string[]): Promise<CommandResult> {
         console.error(`zdr: unknown option: ${command}`);
         return { code: 2 };
       }
-      return placeholderCommand("direct-query");
+      return directQueryCommand([command, ...args]);
   }
 }
 
@@ -216,6 +217,31 @@ async function recoverCommand(): Promise<CommandResult> {
   }
 }
 
+async function directQueryCommand(queryArgv: string[]): Promise<CommandResult> {
+  const query = queryArgv.join(" ").trim();
+  if (query.length === 0) {
+    console.error("zdr: direct query requires a non-empty query");
+    return { code: 2 };
+  }
+
+  try {
+    const lookup = await lookupCorrection(query);
+    if (lookup.status === "hit") {
+      console.log(lookup.entry.path);
+      return { code: 0 };
+    }
+    if (lookup.status === "stale") {
+      console.error(`zdr: cached correction for ${JSON.stringify(query)} no longer exists`);
+      return { code: 1 };
+    }
+    console.error(`zdr: no cached correction for ${JSON.stringify(query)}`);
+    return { code: 1 };
+  } catch (error) {
+    console.error(`zdr: ${error instanceof Error ? error.message : String(error)}`);
+    return { code: 1 };
+  }
+}
+
 async function runSelection(limit: number, options: { announceRetry?: boolean } = {}) {
   const state = await readLastZState();
   if (!state) {
@@ -239,11 +265,6 @@ async function runSelection(limit: number, options: { announceRetry?: boolean } 
   return { state, candidates, result, retry, rejectedPaths };
 }
 
-function placeholderCommand(name: string): CommandResult {
-  console.error(`zdr: ${name} is not implemented yet`);
-  return { code: 2 };
-}
-
 async function providerSmokeCommand(args: string[]): Promise<CommandResult> {
   const { smokePiOpenRouter } = await import("./provider/pi.js");
   return smokePiOpenRouter({ live: args.includes("--live") });
@@ -254,7 +275,7 @@ function printHelp(): void {
 
 Usage:
   zdr                 Repair the last bad zoxide jump
-  zdr <query>         Direct lookup mode (not implemented yet)
+  zdr <query>         Direct lookup from correction cache
   zdr init zsh        Print zsh integration (placeholder)
   zdr record-z        Internal shell-state command
   zdr finish-z        Internal shell-state command
@@ -482,5 +503,7 @@ function parseFinishZArgs(args: string[]): FinishZArgs {
   return { ok: true, attemptId, afterPwd, exitStatus };
 }
 
-const result = await main(Bun.argv.slice(2));
-process.exit(result.code);
+if (import.meta.main) {
+  const result = await main(Bun.argv.slice(2));
+  process.exit(result.code);
+}
