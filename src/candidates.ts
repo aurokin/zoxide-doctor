@@ -18,9 +18,13 @@ export function buildCandidates(input: {
   state: FinishedZState;
   entries: ZoxideEntry[];
   limit?: number;
+  rejectedPaths?: string[];
 }): Candidate[] {
   const query = input.state.query_argv.join(" ").trim();
-  const scored = input.entries.map((entry) => scoreEntry(query, entry, input.state.after_pwd));
+  const rejectedPaths = new Set(input.rejectedPaths ?? []);
+  const scored = input.entries
+    .filter((entry) => !rejectedPaths.has(entry.path))
+    .map((entry) => scoreEntry(query, entry, input.state.after_pwd));
   scored.sort((a, b) => {
     if (b.total_score !== a.total_score) {
       return b.total_score - a.total_score;

@@ -10,6 +10,7 @@ export type SelectionResponse = {
 export function buildSelectionPrompt(input: {
   state: FinishedZState;
   candidates: Candidate[];
+  rejectedPaths?: string[];
 }): { systemPrompt: string; userMessage: string } {
   const query = input.state.query_argv.join(" ").trim();
   const candidateBlock = input.candidates
@@ -37,6 +38,7 @@ export function buildSelectionPrompt(input: {
       `Query: ${sanitizeForPrompt(query)}`,
       `Before pwd: ${sanitizeForPrompt(redactPath(input.state.before_pwd))}`,
       `Landed pwd: ${sanitizeForPrompt(redactPath(input.state.after_pwd))}`,
+      `Already tried wrong: ${formatRejectedPaths(input.rejectedPaths ?? [])}`,
       `Zoxide exit status: ${input.state.exit_status}`,
     ].join("\n"),
   };
@@ -98,4 +100,11 @@ function sanitizeForPrompt(value: string): string {
     .replace(/\b(?:sk|ghp|github_pat|glpat|xox[baprs]?)-[A-Za-z0-9_-]{12,}\b/gi, "[redacted-secret]")
     .replace(/\b[a-f0-9]{32,}\b/gi, "[redacted-token]")
     .replace(/\b(?=[A-Za-z0-9_-]{24,}\b)(?=.*[A-Za-z])(?=.*\d)[A-Za-z0-9_-]+\b/g, "[redacted-token]");
+}
+
+function formatRejectedPaths(paths: string[]): string {
+  if (paths.length === 0) {
+    return "none";
+  }
+  return paths.map((path) => sanitizeForPrompt(redactPath(path))).join(", ");
 }

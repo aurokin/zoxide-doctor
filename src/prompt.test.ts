@@ -32,12 +32,18 @@ const candidates: Candidate[] = [
 
 describe("buildSelectionPrompt", () => {
   test("redacts sensitive query and path data before provider calls", () => {
-    const prompt = buildSelectionPrompt({ state, candidates });
+    const prompt = buildSelectionPrompt({
+      state,
+      candidates,
+      rejectedPaths: ["/Users/auro/code/rejected-secret@example.com"],
+    });
 
     expect(prompt.userMessage).toContain("[redacted-email]");
     expect(prompt.userMessage).toContain("[redacted-secret]");
     expect(prompt.userMessage).toContain("[redacted-token]");
+    expect(prompt.userMessage).toContain("Already tried wrong:");
     expect(prompt.userMessage).not.toContain("john@example.com");
+    expect(prompt.userMessage).not.toContain("rejected-secret@example.com");
     expect(prompt.userMessage).not.toContain("sk-test_1234567890abcdef");
     expect(prompt.userMessage).not.toContain("abcdefabcdefabcdefabcdefabcdefab");
   });

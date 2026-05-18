@@ -12,6 +12,7 @@ export type SelectionResult = {
 export async function selectCandidate(input: {
   state: FinishedZState;
   candidates: Candidate[];
+  rejectedPaths?: string[];
 }): Promise<SelectionResult> {
   const { completeSimple, getModel } = await import("@earendil-works/pi-ai");
   const model = getModel("openrouter", "deepseek/deepseek-v4-flash");

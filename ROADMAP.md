@@ -2,9 +2,9 @@
 
 ## Current Status
 
-Status: planning/specification.
+Status: v0.1 implementation in progress.
 
-The project currently has a written product spec and no implementation. The core decisions are now locked:
+The project currently has the v0.1 CLI scaffold, zsh shell-state capture, no-arg recovery, Pi/OpenRouter selection, candidate generation, privacy redaction, and unit/verify coverage in place. The core decisions are locked:
 
 - Primary workflow: `z <query>` first, then no-arg `zdr` if zoxide lands in the wrong directory.
 - Repeated no-arg `zdr` calls are the rejection/escalation signal.
@@ -14,6 +14,8 @@ The project currently has a written product spec and no implementation. The core
 - Runtime target: TypeScript on Bun, distributed as a Bun-compiled executable.
 - Provider layer: Pi provider/model SDK (`@earendil-works/pi-ai`), with OpenRouter as the v0.1 default provider.
 - Scope boundary: use Pi's completion/model APIs only; do not use Pi's agent loop, coding-agent harness, TUI, tool execution, or session machinery.
+
+Current implementation slice: repeated no-arg `zdr` calls record rejected recovery suggestions so the next recovery attempt can try a different candidate.
 
 ## Release Plan
 

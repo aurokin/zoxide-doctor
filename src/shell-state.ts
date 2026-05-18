@@ -26,10 +26,21 @@ export type FinishedZState = {
 
 export type ZState = PendingZState | FinishedZState;
 
+export type RecoveryRetryState = {
+  schema_version: 1;
+  status: "recovery_retry";
+  z_attempt_id: string;
+  query_argv: string[];
+  wrong_landing_path: string;
+  rejected_paths: string[];
+  updated_at: string;
+};
+
 export type StatePaths = {
   stateDir: string;
   lastZ: string;
   pendingDir: string;
+  recoveryRetry: string;
 };
 
 export function getStatePaths(env: NodeJS.ProcessEnv = process.env): StatePaths {
@@ -39,6 +50,7 @@ export function getStatePaths(env: NodeJS.ProcessEnv = process.env): StatePaths 
     stateDir,
     lastZ: join(stateDir, "last_z.json"),
     pendingDir: join(stateDir, "pending"),
+    recoveryRetry: join(stateDir, "recovery_retry.json"),
   };
 }
 
@@ -99,6 +111,46 @@ export async function readLastZState(): Promise<FinishedZState | null> {
   return state;
 }
 
+export async function readRecoveryRetryState(): Promise<RecoveryRetryState | null> {
+  const state = await readJson<RecoveryRetryState>(getStatePaths().recoveryRetry);
+  if (!state || state.status !== "recovery_retry" || state.schema_version !== 1) {
+    return null;
+  }
+  return state;
+}
+
+export async function readRecoveryRetryForAttempt(state: FinishedZState): Promise<RecoveryRetryState | null> {
+  const retry = await readRecoveryRetryState();
+  if (!retry || retry.z_attempt_id !== state.attempt_id || !arrayEquals(retry.query_argv, state.query_argv)) {
+    return null;
+  }
+  return retry;
+}
+
+export async function writeRecoveryRetry(input: {
+  state: FinishedZState;
+  rejectedPath: string;
+  existing?: RecoveryRetryState | null;
+}): Promise<RecoveryRetryState> {
+  const rejected = new Set(input.existing?.rejected_paths ?? []);
+  rejected.add(input.rejectedPath);
+  const retry: RecoveryRetryState = {
+    schema_version: 1,
+    status: "recovery_retry",
+    z_attempt_id: input.state.attempt_id,
+    query_argv: input.state.query_argv,
+    wrong_landing_path: input.state.after_pwd,
+    rejected_paths: Array.from(rejected),
+    updated_at: new Date().toISOString(),
+  };
+  await writeJsonAtomic(getStatePaths().recoveryRetry, retry);
+  return retry;
+}
+
+export async function clearRecoveryRetry(): Promise<void> {
+  await rm(getStatePaths().recoveryRetry, { force: true });
+}
+
 async function readJson<T>(path: string): Promise<T | null> {
   try {
     return JSON.parse(await readFile(path, "utf8")) as T;
@@ -133,6 +185,10 @@ function detectShell(): string {
     return "unknown";
   }
   return shell.split("/").at(-1) || shell;
+}
+
+function arrayEquals(a: string[], b: string[]): boolean {
+  return a.length === b.length && a.every((value, index) => value === b[index]);
 }
 
 function homeDir(env: NodeJS.ProcessEnv): string {

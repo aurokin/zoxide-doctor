@@ -45,4 +45,23 @@ describe("buildCandidates", () => {
       true,
     );
   });
+
+  test("excludes rejected recovery paths before assigning candidate IDs", () => {
+    const entries: ZoxideEntry[] = [
+      { path: "/Users/auro/code/agentscan", score: 10, rank: 1 },
+      { path: "/Users/auro/code/agentchat", score: 9, rank: 2 },
+      { path: "/Users/auro/code/wrong", score: 8, rank: 3 },
+    ];
+
+    const candidates = buildCandidates({
+      state: baseState,
+      entries,
+      rejectedPaths: ["/Users/auro/code/agentscan"],
+      limit: 3,
+    });
+
+    expect(candidates.some((candidate) => candidate.path === "/Users/auro/code/agentscan")).toBe(false);
+    expect(candidates[0]?.id).toBe("c001");
+    expect(candidates[0]?.path).toBe("/Users/auro/code/agentchat");
+  });
 });

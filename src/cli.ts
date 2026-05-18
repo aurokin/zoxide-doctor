@@ -2,7 +2,14 @@
 
 import packageJson from "../package.json" with { type: "json" };
 import { buildCandidates } from "./candidates.js";
-import { finishZAttempt, readLastZState, recordZAttempt } from "./shell-state.js";
+import {
+  clearRecoveryRetry,
+  finishZAttempt,
+  readLastZState,
+  readRecoveryRetryForAttempt,
+  recordZAttempt,
+  writeRecoveryRetry,
+} from "./shell-state.js";
 import { loadZoxideEntries } from "./zoxide.js";
 
 type CommandResult = {
@@ -35,6 +42,8 @@ async function main(argv: string[]): Promise<CommandResult> {
       return recordZCommand(args);
     case "finish-z":
       return finishZCommand(args);
+    case "clear-recovery-retry":
+      return clearRecoveryRetryCommand();
     case "debug-state":
       return debugStateCommand();
     case "debug-candidates":
@@ -70,12 +79,18 @@ async function recordZCommand(args: string[]): Promise<CommandResult> {
     return { code: 2 };
   }
 
+  await clearRecoveryRetry();
   await recordZAttempt({
     attemptId: parsed.attemptId,
     beforePwd: parsed.beforePwd,
     queryArgv: parsed.queryArgv,
     ...(parsed.shell ? { shell: parsed.shell } : {}),
   });
+  return { code: 0 };
+}
+
+async function clearRecoveryRetryCommand(): Promise<CommandResult> {
+  await clearRecoveryRetry();
   return { code: 0 };
 }
 
@@ -157,11 +172,12 @@ async function debugSelectCommand(args: string[]): Promise<CommandResult> {
   }
 
   try {
-    const { state, result } = await runSelection(limit.value);
+    const { state, result, rejectedPaths } = await runSelection(limit.value);
     console.log(
       JSON.stringify(
         {
           query: state.query_argv.join(" "),
+          rejected_paths: rejectedPaths,
           selected_candidate_id: result.selection.candidate_id,
           confidence: result.selection.confidence,
           reason: result.selection.reason,
@@ -182,11 +198,16 @@ async function debugSelectCommand(args: string[]): Promise<CommandResult> {
 
 async function recoverCommand(): Promise<CommandResult> {
   try {
-    const { result } = await runSelection(50);
+    const { state, result, retry } = await runSelection(50, { announceRetry: true });
     if (!result.candidate) {
       console.error(result.selection.reason ? `zdr: ${result.selection.reason}` : "zdr: no candidate selected");
       return { code: 1 };
     }
+    await writeRecoveryRetry({
+      state,
+      rejectedPath: result.candidate.path,
+      existing: retry,
+    });
     console.log(result.candidate.path);
     return { code: 0 };
   } catch (error) {
@@ -195,21 +216,27 @@ async function recoverCommand(): Promise<CommandResult> {
   }
 }
 
-async function runSelection(limit: number) {
+async function runSelection(limit: number, options: { announceRetry?: boolean } = {}) {
   const state = await readLastZState();
   if (!state) {
     throw new Error("no recorded z attempt found");
   }
 
   const entries = await loadZoxideEntries();
+  const retry = await readRecoveryRetryForAttempt(state);
+  const rejectedPaths = retry?.rejected_paths ?? [];
+  if (retry && options.announceRetry) {
+    console.error("zdr: thinking harder...");
+  }
   const candidates = buildCandidates({
     state,
     entries,
     limit,
+    rejectedPaths,
   });
   const { selectCandidate } = await import("./provider/select.js");
-  const result = await selectCandidate({ state, candidates });
-  return { state, candidates, result };
+  const result = await selectCandidate({ state, candidates, rejectedPaths });
+  return { state, candidates, result, retry, rejectedPaths };
 }
 
 function placeholderCommand(name: string): CommandResult {
@@ -231,6 +258,8 @@ Usage:
   zdr init zsh        Print zsh integration (placeholder)
   zdr record-z        Internal shell-state command
   zdr finish-z        Internal shell-state command
+  zdr clear-recovery-retry
+                      Internal shell-state command
   zdr debug-state     Print recorded z state
   zdr debug-candidates
                       Print candidate list for the recorded z state
@@ -269,7 +298,7 @@ function zshInitScript(): string {
     "",
     "zdr() {",
     "  case \"$1\" in",
-    "    init|record-z|finish-z|debug-state|debug-candidates|debug-select|provider-smoke|--*|-*)",
+    "    init|record-z|finish-z|clear-recovery-retry|debug-state|debug-candidates|debug-select|provider-smoke|--*|-*)",
     "      command zdr \"$@\"",
     "      return $?",
     "      ;;",
@@ -288,7 +317,10 @@ function zshInitScript(): string {
     "_zdr_preexec() {",
     '  case "$1" in',
     "    zdr) ;;",
-    '    *) rm -f "${XDG_CACHE_HOME:-$HOME/.cache}/zdr/escalate" ;;',
+    "    *)",
+    '      local __zdr_retry="${XDG_STATE_HOME:-$HOME/.local/state}/zdr/recovery_retry.json"',
+    '      [[ -e "$__zdr_retry" ]] && rm -f "$__zdr_retry"',
+    "      ;;",
     "  esac",
     "}",
     "",
