@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { main } from "./cli.js";
 import type { Candidate } from "./candidates.js";
 import type { CorrectionLookup } from "./corrections.js";
-import { readCorrectionCache, storeCorrection, writeCorrectionCache } from "./corrections.js";
+import { readCorrectionCache, storeCorrection, writeCorrectionCache, type CorrectionEntry } from "./corrections.js";
 
 let previousXdgCacheHome: string | undefined;
 let previousLog: typeof console.log;
@@ -76,6 +76,7 @@ describe("main direct query mode", () => {
   test("uses model selection on direct query cache miss", async () => {
     const selected = join(tempDir, "agentscan");
     const other = join(tempDir, "other");
+    await mkdir(selected);
 
     expect(
       await main(["ascan"], {
@@ -104,6 +105,7 @@ describe("main direct query mode", () => {
   test("falls back to model selection after stale direct query cache entry", async () => {
     const stalePath = join(tempDir, "missing");
     const selected = join(tempDir, "agentscan");
+    await mkdir(selected);
     await writeCorrectionCache({
       ascan: {
         path: stalePath,
@@ -122,21 +124,71 @@ describe("main direct query mode", () => {
 
     expect(stdout).toEqual([selected]);
     expect(stderr).toEqual([]);
-    expect(await readCorrectionCache()).toEqual({});
+    expect(await readCorrectionCache()).toEqual({
+      ascan: {
+        path: selected,
+        first_resolved: "2026-05-18T00:00:00.000Z",
+        hits: 0,
+      },
+    });
   });
 
-  test("does not write correction cache after model fallback selection", async () => {
+  test("stores high-confidence model fallback selection in correction cache", async () => {
     const selected = join(tempDir, "agentscan");
+    await mkdir(selected);
 
     expect(
       await main(["ascan"], {
         ...testDeps({ lookup: { status: "miss", query: "ascan" } }),
         loadZoxideEntries: async () => [{ path: selected, score: 10, rank: 1 }],
-        selectCandidate: async ({ candidates }) => selectionResult(candidates[0] ?? null),
+        selectCandidate: async ({ candidates }) => selectionResult(candidates[0] ?? null, "selected", 0.8),
       }),
     ).toEqual({ code: 0 });
 
+    expect(await readCorrectionCache()).toEqual({
+      ascan: {
+        path: selected,
+        first_resolved: "2026-05-18T00:00:00.000Z",
+        hits: 0,
+      },
+    });
+  });
+
+  test("does not store low-confidence model fallback selection", async () => {
+    const selected = join(tempDir, "agentscan");
+    await mkdir(selected);
+
+    expect(
+      await main(["ascan"], {
+        ...testDeps({ lookup: { status: "miss", query: "ascan" } }),
+        loadZoxideEntries: async () => [{ path: selected, score: 10, rank: 1 }],
+        selectCandidate: async ({ candidates }) => selectionResult(candidates[0] ?? null, "selected", 0.74),
+      }),
+    ).toEqual({ code: 0 });
+
+    expect(stdout).toEqual([selected]);
+    expect(stderr).toEqual([]);
     expect(await readCorrectionCache()).toEqual({});
+  });
+
+  test("keeps navigation successful when storing correction fails", async () => {
+    const selected = join(tempDir, "agentscan");
+
+    expect(
+      await main(["ascan"], {
+        ...testDeps({
+          lookup: { status: "miss", query: "ascan" },
+          storeCorrection: async () => {
+            throw new Error("cache is read-only");
+          },
+        }),
+        loadZoxideEntries: async () => [{ path: selected, score: 10, rank: 1 }],
+        selectCandidate: async ({ candidates }) => selectionResult(candidates[0] ?? null, "selected", 0.8),
+      }),
+    ).toEqual({ code: 0 });
+
+    expect(stdout).toEqual([selected]);
+    expect(stderr).toEqual(["zdr: warning: failed to store correction: cache is read-only"]);
   });
 
   test("fails clearly when model fallback selects no candidate", async () => {
@@ -153,9 +205,10 @@ describe("main direct query mode", () => {
   });
 });
 
-function testDeps(input: { lookup?: CorrectionLookup } = {}) {
+function testDeps(input: { lookup?: CorrectionLookup; storeCorrection?: StoreCorrection } = {}) {
   return {
     lookupCorrection: input.lookup ? async () => input.lookup as CorrectionLookup : readCorrectionFromCache,
+    storeCorrection: input.storeCorrection ?? storeCorrection,
     loadZoxideEntries: async () => {
       throw new Error("unexpected zoxide load");
     },
@@ -172,11 +225,13 @@ async function readCorrectionFromCache(query: string): Promise<CorrectionLookup>
   return lookupCorrection(query);
 }
 
-function selectionResult(candidate: Candidate | null, reason = "selected") {
+type StoreCorrection = (input: { query: string; path: string; now?: Date }) => Promise<CorrectionEntry>;
+
+function selectionResult(candidate: Candidate | null, reason = "selected", confidence = candidate ? 0.8 : 0) {
   return {
     selection: {
       candidate_id: candidate?.id ?? null,
-      confidence: candidate ? 0.8 : 0,
+      confidence,
       reason,
     },
     candidate,

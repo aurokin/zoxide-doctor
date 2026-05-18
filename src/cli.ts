@@ -2,7 +2,7 @@
 
 import packageJson from "../package.json" with { type: "json" };
 import { buildCandidates, type Candidate } from "./candidates.js";
-import { lookupCorrection, type CorrectionLookup } from "./corrections.js";
+import { lookupCorrection, storeCorrection, type CorrectionEntry, type CorrectionLookup } from "./corrections.js";
 import {
   clearRecoveryRetry,
   type FinishedZState,
@@ -27,12 +27,14 @@ type SelectCandidate = (input: {
 
 type CliDeps = {
   lookupCorrection: (query: string) => Promise<CorrectionLookup>;
+  storeCorrection: (input: { query: string; path: string; now?: Date }) => Promise<CorrectionEntry>;
   loadZoxideEntries: () => Promise<ZoxideEntry[]>;
   selectCandidate: SelectCandidate;
   cwd: () => string;
   now: () => Date;
 };
 
+const DIRECT_QUERY_CACHE_CONFIDENCE = 0.75;
 const VERSION = packageJson.version;
 
 export async function main(argv: string[], deps: CliDeps = defaultDeps): Promise<CommandResult> {
@@ -80,6 +82,7 @@ export async function main(argv: string[], deps: CliDeps = defaultDeps): Promise
 
 const defaultDeps: CliDeps = {
   lookupCorrection,
+  storeCorrection,
   loadZoxideEntries,
   selectCandidate: async (input) => {
     const { selectCandidate } = await import("./provider/select.js");
@@ -262,6 +265,11 @@ async function directQueryCommand(queryArgv: string[], deps: CliDeps): Promise<C
       console.error(result.selection.reason ? `zdr: ${result.selection.reason}` : "zdr: no candidate selected");
       return { code: 1 };
     }
+    await maybeStoreDirectQueryCorrection({
+      query,
+      result,
+      deps,
+    });
     console.log(result.candidate.path);
     return { code: 0 };
   } catch (error) {
@@ -282,6 +290,25 @@ async function runDirectQuerySelection(queryArgv: string[], deps: CliDeps): Prom
     throw new Error("no zoxide candidates found");
   }
   return deps.selectCandidate({ state, candidates });
+}
+
+async function maybeStoreDirectQueryCorrection(input: {
+  query: string;
+  result: SelectionResult;
+  deps: CliDeps;
+}): Promise<void> {
+  if (!input.result.candidate || input.result.selection.confidence < DIRECT_QUERY_CACHE_CONFIDENCE) {
+    return;
+  }
+  try {
+    await input.deps.storeCorrection({
+      query: input.query,
+      path: input.result.candidate.path,
+      now: input.deps.now(),
+    });
+  } catch (error) {
+    console.error(`zdr: warning: failed to store correction: ${error instanceof Error ? error.message : String(error)}`);
+  }
 }
 
 function directQueryState(queryArgv: string[], deps: CliDeps): FinishedZState {
