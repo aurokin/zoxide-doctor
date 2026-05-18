@@ -1,25 +1,41 @@
 #!/usr/bin/env bun
 
 import packageJson from "../package.json" with { type: "json" };
-import { buildCandidates } from "./candidates.js";
-import { lookupCorrection } from "./corrections.js";
+import { buildCandidates, type Candidate } from "./candidates.js";
+import { lookupCorrection, type CorrectionLookup } from "./corrections.js";
 import {
   clearRecoveryRetry,
+  type FinishedZState,
   finishZAttempt,
   readLastZState,
   readRecoveryRetryForAttempt,
   recordZAttempt,
   writeRecoveryRetry,
 } from "./shell-state.js";
-import { loadZoxideEntries } from "./zoxide.js";
+import { loadZoxideEntries, type ZoxideEntry } from "./zoxide.js";
+import type { SelectionResult } from "./provider/select.js";
 
 type CommandResult = {
   code: number;
 };
 
+type SelectCandidate = (input: {
+  state: FinishedZState;
+  candidates: Candidate[];
+  rejectedPaths?: string[];
+}) => Promise<SelectionResult>;
+
+type CliDeps = {
+  lookupCorrection: (query: string) => Promise<CorrectionLookup>;
+  loadZoxideEntries: () => Promise<ZoxideEntry[]>;
+  selectCandidate: SelectCandidate;
+  cwd: () => string;
+  now: () => Date;
+};
+
 const VERSION = packageJson.version;
 
-export async function main(argv: string[]): Promise<CommandResult> {
+export async function main(argv: string[], deps: CliDeps = defaultDeps): Promise<CommandResult> {
   const [command, ...args] = argv;
 
   if (command === "--help" || command === "-h") {
@@ -58,9 +74,20 @@ export async function main(argv: string[]): Promise<CommandResult> {
         console.error(`zdr: unknown option: ${command}`);
         return { code: 2 };
       }
-      return directQueryCommand([command, ...args]);
+      return directQueryCommand([command, ...args], deps);
   }
 }
+
+const defaultDeps: CliDeps = {
+  lookupCorrection,
+  loadZoxideEntries,
+  selectCandidate: async (input) => {
+    const { selectCandidate } = await import("./provider/select.js");
+    return selectCandidate(input);
+  },
+  cwd: () => process.cwd(),
+  now: () => new Date(),
+};
 
 function initCommand(args: string[]): CommandResult {
   const [shell] = args;
@@ -217,7 +244,7 @@ async function recoverCommand(): Promise<CommandResult> {
   }
 }
 
-async function directQueryCommand(queryArgv: string[]): Promise<CommandResult> {
+async function directQueryCommand(queryArgv: string[], deps: CliDeps): Promise<CommandResult> {
   const query = queryArgv.join(" ").trim();
   if (query.length === 0) {
     console.error("zdr: direct query requires a non-empty query");
@@ -225,21 +252,52 @@ async function directQueryCommand(queryArgv: string[]): Promise<CommandResult> {
   }
 
   try {
-    const lookup = await lookupCorrection(query);
+    const lookup = await deps.lookupCorrection(query);
     if (lookup.status === "hit") {
       console.log(lookup.entry.path);
       return { code: 0 };
     }
-    if (lookup.status === "stale") {
-      console.error(`zdr: cached correction for ${JSON.stringify(query)} no longer exists`);
+    const result = await runDirectQuerySelection(queryArgv, deps);
+    if (!result.candidate) {
+      console.error(result.selection.reason ? `zdr: ${result.selection.reason}` : "zdr: no candidate selected");
       return { code: 1 };
     }
-    console.error(`zdr: no cached correction for ${JSON.stringify(query)}`);
-    return { code: 1 };
+    console.log(result.candidate.path);
+    return { code: 0 };
   } catch (error) {
     console.error(`zdr: ${error instanceof Error ? error.message : String(error)}`);
     return { code: 1 };
   }
+}
+
+async function runDirectQuerySelection(queryArgv: string[], deps: CliDeps): Promise<SelectionResult> {
+  const entries = await deps.loadZoxideEntries();
+  const state = directQueryState(queryArgv, deps);
+  const candidates = buildCandidates({
+    state,
+    entries,
+    limit: 50,
+  });
+  if (candidates.length === 0) {
+    throw new Error("no zoxide candidates found");
+  }
+  return deps.selectCandidate({ state, candidates });
+}
+
+function directQueryState(queryArgv: string[], deps: CliDeps): FinishedZState {
+  const now = deps.now().toISOString();
+  return {
+    schema_version: 1,
+    status: "finished",
+    attempt_id: "direct-query",
+    query_argv: queryArgv,
+    before_pwd: deps.cwd(),
+    after_pwd: "",
+    exit_status: 0,
+    shell: "direct-query",
+    started_at: now,
+    finished_at: now,
+  };
 }
 
 async function runSelection(limit: number, options: { announceRetry?: boolean } = {}) {
@@ -275,7 +333,7 @@ function printHelp(): void {
 
 Usage:
   zdr                 Repair the last bad zoxide jump
-  zdr <query>         Direct lookup from correction cache
+  zdr <query>         Direct lookup from correction cache or model selection
   zdr init zsh        Print zsh integration (placeholder)
   zdr record-z        Internal shell-state command
   zdr finish-z        Internal shell-state command

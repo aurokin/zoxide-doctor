@@ -3,6 +3,8 @@ import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { main } from "./cli.js";
+import type { Candidate } from "./candidates.js";
+import type { CorrectionLookup } from "./corrections.js";
 import { readCorrectionCache, storeCorrection, writeCorrectionCache } from "./corrections.js";
 
 let previousXdgCacheHome: string | undefined;
@@ -71,15 +73,37 @@ describe("main direct query mode", () => {
     expect(stderr).toEqual([]);
   });
 
-  test("fails clearly on direct query cache miss", async () => {
-    expect(await main(["ascan"])).toEqual({ code: 1 });
+  test("uses model selection on direct query cache miss", async () => {
+    const selected = join(tempDir, "agentscan");
+    const other = join(tempDir, "other");
 
-    expect(stdout).toEqual([]);
-    expect(stderr).toEqual(['zdr: no cached correction for "ascan"']);
+    expect(
+      await main(["ascan"], {
+        ...testDeps({ lookup: { status: "miss", query: "ascan" } }),
+        loadZoxideEntries: async () => [
+          { path: selected, score: 10, rank: 1 },
+          { path: other, score: 9, rank: 2 },
+        ],
+        selectCandidate: async ({ state, candidates }) => {
+          expect(state).toMatchObject({
+            query_argv: ["ascan"],
+            before_pwd: tempDir,
+            after_pwd: "",
+            shell: "direct-query",
+          });
+          expect(candidates.map((candidate) => candidate.path)).toContain(selected);
+          return selectionResult(candidates.find((candidate) => candidate.path === selected) ?? null);
+        },
+      }),
+    ).toEqual({ code: 0 });
+
+    expect(stdout).toEqual([selected]);
+    expect(stderr).toEqual([]);
   });
 
-  test("evicts stale direct query cache hits", async () => {
+  test("falls back to model selection after stale direct query cache entry", async () => {
     const stalePath = join(tempDir, "missing");
+    const selected = join(tempDir, "agentscan");
     await writeCorrectionCache({
       ascan: {
         path: stalePath,
@@ -88,10 +112,75 @@ describe("main direct query mode", () => {
       },
     });
 
-    expect(await main(["ascan"])).toEqual({ code: 1 });
+    expect(
+      await main(["ascan"], {
+        ...testDeps(),
+        loadZoxideEntries: async () => [{ path: selected, score: 10, rank: 1 }],
+        selectCandidate: async ({ candidates }) => selectionResult(candidates[0] ?? null),
+      }),
+    ).toEqual({ code: 0 });
 
-    expect(stdout).toEqual([]);
-    expect(stderr).toEqual(['zdr: cached correction for "ascan" no longer exists']);
+    expect(stdout).toEqual([selected]);
+    expect(stderr).toEqual([]);
     expect(await readCorrectionCache()).toEqual({});
   });
+
+  test("does not write correction cache after model fallback selection", async () => {
+    const selected = join(tempDir, "agentscan");
+
+    expect(
+      await main(["ascan"], {
+        ...testDeps({ lookup: { status: "miss", query: "ascan" } }),
+        loadZoxideEntries: async () => [{ path: selected, score: 10, rank: 1 }],
+        selectCandidate: async ({ candidates }) => selectionResult(candidates[0] ?? null),
+      }),
+    ).toEqual({ code: 0 });
+
+    expect(await readCorrectionCache()).toEqual({});
+  });
+
+  test("fails clearly when model fallback selects no candidate", async () => {
+    expect(
+      await main(["ascan"], {
+        ...testDeps({ lookup: { status: "miss", query: "ascan" } }),
+        loadZoxideEntries: async () => [{ path: join(tempDir, "agentscan"), score: 10, rank: 1 }],
+        selectCandidate: async () => selectionResult(null, "no good match"),
+      }),
+    ).toEqual({ code: 1 });
+
+    expect(stdout).toEqual([]);
+    expect(stderr).toEqual(["zdr: no good match"]);
+  });
 });
+
+function testDeps(input: { lookup?: CorrectionLookup } = {}) {
+  return {
+    lookupCorrection: input.lookup ? async () => input.lookup as CorrectionLookup : readCorrectionFromCache,
+    loadZoxideEntries: async () => {
+      throw new Error("unexpected zoxide load");
+    },
+    selectCandidate: async () => {
+      throw new Error("unexpected model selection");
+    },
+    cwd: () => tempDir,
+    now: () => new Date("2026-05-18T00:00:00.000Z"),
+  };
+}
+
+async function readCorrectionFromCache(query: string): Promise<CorrectionLookup> {
+  const { lookupCorrection } = await import("./corrections.js");
+  return lookupCorrection(query);
+}
+
+function selectionResult(candidate: Candidate | null, reason = "selected") {
+  return {
+    selection: {
+      candidate_id: candidate?.id ?? null,
+      confidence: candidate ? 0.8 : 0,
+      reason,
+    },
+    candidate,
+    raw_text: "",
+    usage: null,
+  };
+}
