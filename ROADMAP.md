@@ -15,7 +15,7 @@ The project currently has the v0.1 core recovery loop plus v0.2 direct-query cor
 - Provider layer: Pi provider/model SDK (`@earendil-works/pi-ai`), with OpenRouter as the v0.1 default provider.
 - Scope boundary: use Pi's completion/model APIs only; do not use Pi's agent loop, coding-agent harness, TUI, tool execution, or session machinery.
 
-Current implementation status: no-arg recovery records rejected `zdr` suggestions for repeat attempts, third-attempt recovery opens an `fzf` picker over zoxide candidates, and `zdr <query>` uses local correction-cache hits before falling back to model selection and caching high-confidence direct-query results.
+Current implementation status: no-arg recovery records rejected `zdr` suggestions for repeat attempts, third-attempt recovery opens an `fzf` picker over zoxide candidates plus optional `fd` scan results, and `zdr <query>` uses local correction-cache hits before falling back to model selection and caching high-confidence direct-query results.
 
 ## Release Plan
 
@@ -73,7 +73,7 @@ Exit criteria:
 
 Goal: make bad repairs recoverable without leaving the flow.
 
-Status: in progress. Repeat-attempt routing and zoxide-candidate `fzf` picker fallback are implemented; `fd` directory scan augmentation is still pending.
+Status: implemented, pending docs/review polish.
 
 Features:
 

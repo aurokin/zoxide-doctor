@@ -404,7 +404,7 @@ describe("main recovery routing", () => {
   test("first no-arg recovery uses model selection without retry announcement", async () => {
     const selected = join(tempDir, "agentscan");
     await mkdir(selected);
-    await recordFinishedZAttempt("recovery-1", join(tempDir, "wrong"), "ascan");
+    await recordFinishedZAttempt("recovery-1", join(tempDir, "wrong"), ["ascan"]);
 
     expect(
       await main([], {
@@ -426,7 +426,7 @@ describe("main recovery routing", () => {
     const second = join(tempDir, "agentscan");
     await mkdir(first);
     await mkdir(second);
-    await recordFinishedZAttempt("recovery-2", join(tempDir, "wrong"), "ascan");
+    await recordFinishedZAttempt("recovery-2", join(tempDir, "wrong"), ["ascan"]);
     await main([], {
       ...testDeps(),
       loadZoxideEntries: async () => [
@@ -461,10 +461,13 @@ describe("main recovery routing", () => {
     const first = join(tempDir, "agentscan-old");
     const second = join(tempDir, "agentscan-other");
     const selected = join(tempDir, "agentscan");
+    const beforeDir = join(tempDir, "before");
+    const wrongDir = join(tempDir, "wrong");
+    await mkdir(beforeDir);
     await mkdir(first);
     await mkdir(second);
     await mkdir(selected);
-    await recordFinishedZAttempt("recovery-3", join(tempDir, "wrong"), "ascan");
+    await recordFinishedZAttempt("recovery-3", wrongDir, ["ascan"], { beforePath: beforeDir });
     await main([], {
       ...testDeps(),
       loadZoxideEntries: async () => [
@@ -496,6 +499,7 @@ describe("main recovery routing", () => {
                 { path: selected, score: 8, rank: 3 },
               ],
               rejectedPaths: [first, second],
+              scanRoots: [tempDir, beforeDir, wrongDir],
             });
             return { status: "selected", path: selected };
           },
@@ -513,7 +517,7 @@ describe("main recovery routing", () => {
   });
 
   test("third no-arg recovery reports picker cancellation", async () => {
-    await recordFinishedZAttempt("recovery-cancel", join(tempDir, "wrong"), "ascan");
+    await recordFinishedZAttempt("recovery-cancel", join(tempDir, "wrong"), ["ascan"]);
     await seedRejectedRecoveryPaths(["/repo/wrong-1", "/repo/wrong-2"]);
 
     expect(
@@ -530,7 +534,7 @@ describe("main recovery routing", () => {
   });
 
   test("third no-arg recovery reports unavailable picker dependency", async () => {
-    await recordFinishedZAttempt("recovery-unavailable", join(tempDir, "wrong"), "ascan");
+    await recordFinishedZAttempt("recovery-unavailable", join(tempDir, "wrong"), ["ascan"]);
     await seedRejectedRecoveryPaths(["/repo/wrong-1", "/repo/wrong-2"]);
 
     expect(
@@ -544,6 +548,28 @@ describe("main recovery routing", () => {
 
     expect(stdout).toEqual([]);
     expect(stderr).toEqual(["zdr: opening picker...", "zdr: fzf is required for interactive picker fallback"]);
+  });
+
+  test("third no-arg recovery filters broad picker scan parents", async () => {
+    const selected = join(tempDir, "agentscan");
+    await mkdir(selected);
+    await recordFinishedZAttempt("recovery-broad-roots", "/Users/auro/wrong", ["ascan"], { beforePath: "/Users/auro" });
+    await seedRejectedRecoveryPaths(["/repo/wrong-1", "/repo/wrong-2"]);
+
+    expect(
+      await main([], {
+        ...testDeps({
+          runPicker: async (input) => {
+            expect(input.scanRoots).toEqual([tempDir, "/Users/auro", "/Users/auro/wrong"]);
+            return { status: "selected", path: selected };
+          },
+        }),
+        loadZoxideEntries: async () => [{ path: selected, score: 10, rank: 1 }],
+      }),
+    ).toEqual({ code: 0 });
+
+    expect(stdout).toEqual([selected]);
+    expect(stderr).toEqual(["zdr: opening picker..."]);
   });
 });
 
@@ -568,8 +594,13 @@ function testDeps(input: { lookup?: CorrectionLookup; storeCorrection?: StoreCor
   };
 }
 
-async function recordFinishedZAttempt(attemptId: string, afterPath: string, ...queryArgv: string[]): Promise<void> {
-  await main(["record-z", "--attempt", attemptId, "--before", tempDir, "--shell", "zsh", "--", ...queryArgv]);
+async function recordFinishedZAttempt(
+  attemptId: string,
+  afterPath: string,
+  queryArgv: string[],
+  options: { beforePath?: string } = {},
+): Promise<void> {
+  await main(["record-z", "--attempt", attemptId, "--before", options.beforePath ?? tempDir, "--shell", "zsh", "--", ...queryArgv]);
   await main(["finish-z", "--attempt", attemptId, "--after", afterPath, "--status", "0"]);
   stdout = [];
   stderr = [];

@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 
 import packageJson from "../package.json" with { type: "json" };
+import { dirname, parse } from "node:path";
 import { buildCandidates, type Candidate } from "./candidates.js";
 import {
   forgetCorrection,
@@ -490,6 +491,7 @@ async function pickerRecoveryCommand(
     query: state.query_argv.join(" "),
     zoxideEntries: entries,
     rejectedPaths: retry.rejected_paths,
+    scanRoots: pickerScanRoots(state, deps),
   });
   switch (result.status) {
     case "selected":
@@ -502,6 +504,53 @@ async function pickerRecoveryCommand(
       console.error(`zdr: ${result.reason}`);
       return { code: 1 };
   }
+}
+
+function pickerScanRoots(state: FinishedZState, deps: CliDeps): string[] {
+  const candidates = [
+    deps.cwd(),
+    state.before_pwd,
+    state.after_pwd,
+  ];
+  for (const path of [state.before_pwd, state.after_pwd]) {
+    const parent = dirname(path);
+    if (isSpecificScanRoot(parent)) {
+      candidates.push(parent);
+    }
+  }
+  return uniqueExistingText(candidates);
+}
+
+function uniqueExistingText(values: string[]): string[] {
+  const result: string[] = [];
+  const seen = new Set<string>();
+  for (const value of values) {
+    if (value.length === 0 || seen.has(value)) {
+      continue;
+    }
+    seen.add(value);
+    result.push(value);
+  }
+  return result;
+}
+
+function isSpecificScanRoot(path: string): boolean {
+  const parsed = parse(path);
+  if (path === parsed.root) {
+    return false;
+  }
+  const relative = path.slice(parsed.root.length);
+  const segments = relative.split("/").filter((segment) => segment.length > 0);
+  if (segments.length < 2) {
+    return false;
+  }
+  if (segments.length === 2 && (segments[0] === "Users" || segments[0] === "home")) {
+    return false;
+  }
+  if (segments.length === 1 && (segments[0] === "tmp" || segments[0] === "var")) {
+    return false;
+  }
+  return true;
 }
 
 type RecoveryMode = "model" | "retry-model" | "picker";
