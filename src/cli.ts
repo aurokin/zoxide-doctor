@@ -275,7 +275,13 @@ async function forgetCommand(args: string[]): Promise<CommandResult> {
 }
 
 async function debugTimingCommand(args: string[], deps: CliDeps): Promise<CommandResult> {
-  const query = args.join(" ").trim();
+  const parsed = parseDebugTimingArgs(args);
+  if (!parsed.ok) {
+    console.error(`zdr: ${parsed.error}`);
+    return { code: 2 };
+  }
+  const query = parsed.queryArgv.join(" ").trim();
+  const commandStart = performance.now();
   const measurements: TimingMeasurement[] = [];
 
   measurements.push(
@@ -311,12 +317,20 @@ async function debugTimingCommand(args: string[], deps: CliDeps): Promise<Comman
     });
   }
   measurements.push(await measureStep("recovery-context", () => measureRecoveryContext(deps)));
+  const totalDurationMs = elapsedMs(commandStart);
 
   console.log(
     JSON.stringify(
       {
         schema_version: 1,
         command: "debug-timing",
+        total_duration_ms: totalDurationMs,
+        ...(parsed.budgetMs === undefined
+          ? {}
+          : {
+              budget_ms: parsed.budgetMs,
+              within_budget: totalDurationMs <= parsed.budgetMs,
+            }),
         measurements,
       },
       null,
@@ -324,6 +338,50 @@ async function debugTimingCommand(args: string[], deps: CliDeps): Promise<Comman
     ),
   );
   return { code: 0 };
+}
+
+type DebugTimingArgs =
+  | { ok: true; queryArgv: string[]; budgetMs?: number }
+  | { ok: false; error: string };
+
+function parseDebugTimingArgs(args: string[]): DebugTimingArgs {
+  const queryArgv: string[] = [];
+  let budgetMs: number | undefined;
+
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+    if (!arg) {
+      return { ok: false, error: "unexpected missing argument" };
+    }
+    if (arg === "--budget-ms") {
+      const value = args[index + 1];
+      if (!value) {
+        return { ok: false, error: "--budget-ms requires a value" };
+      }
+      const parsed = Number(value);
+      if (!Number.isFinite(parsed) || parsed <= 0) {
+        return { ok: false, error: "--budget-ms must be a positive number" };
+      }
+      budgetMs = parsed;
+      index += 1;
+      continue;
+    }
+    if (arg.startsWith("--budget-ms=")) {
+      const value = arg.slice("--budget-ms=".length);
+      const parsed = Number(value);
+      if (!Number.isFinite(parsed) || parsed <= 0) {
+        return { ok: false, error: "--budget-ms must be a positive number" };
+      }
+      budgetMs = parsed;
+      continue;
+    }
+    if (arg.startsWith("-")) {
+      return { ok: false, error: `unknown debug-timing option: ${arg}` };
+    }
+    queryArgv.push(arg);
+  }
+
+  return budgetMs === undefined ? { ok: true, queryArgv } : { ok: true, queryArgv, budgetMs };
 }
 
 type TimingMeasurement = {
@@ -530,6 +588,8 @@ Usage:
                       Print direct-query correction cache
   zdr debug-timing [query]
                       Measure local timing paths as JSON
+  zdr debug-timing [query] --budget-ms <ms>
+                      Include local timing budget status in JSON
   zdr forget <query> Remove one exact direct-query correction
   zdr provider-smoke  Verify Pi/OpenRouter import and model lookup
   zdr provider-smoke --live

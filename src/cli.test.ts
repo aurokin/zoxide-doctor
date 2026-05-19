@@ -322,6 +322,7 @@ describe("main timing command", () => {
     const payload = JSON.parse(stdout.join("\n")) as TimingPayload;
     expect(payload.schema_version).toBe(1);
     expect(payload.command).toBe("debug-timing");
+    expect(payload.total_duration_ms).toBeGreaterThanOrEqual(0);
     expect(payload.measurements.map((measurement) => measurement.name)).toEqual([
       "version",
       "debug-corrections",
@@ -380,6 +381,22 @@ describe("main timing command", () => {
     expect(stderr).toEqual([]);
     expect((await readCorrectionCache()).ascan?.hits).toBe(0);
   });
+
+  test("includes budget status when budget is provided", async () => {
+    expect(await main(["debug-timing", "ascan", "--budget-ms", "1000"], testDeps())).toEqual({ code: 0 });
+
+    const payload = JSON.parse(stdout.join("\n")) as TimingPayload;
+    expect(payload.budget_ms).toBe(1000);
+    expect(payload.within_budget).toBe(true);
+    expect(stderr).toEqual([]);
+  });
+
+  test("rejects invalid timing budget values", async () => {
+    expect(await main(["debug-timing", "--budget-ms", "0"], testDeps())).toEqual({ code: 2 });
+
+    expect(stdout).toEqual([]);
+    expect(stderr).toEqual(["zdr: --budget-ms must be a positive number"]);
+  });
 });
 
 function testDeps(input: { lookup?: CorrectionLookup; storeCorrection?: StoreCorrection } = {}) {
@@ -421,6 +438,9 @@ function selectionResult(candidate: Candidate | null, reason = "selected", confi
 type TimingPayload = {
   schema_version: 1;
   command: "debug-timing";
+  total_duration_ms: number;
+  budget_ms?: number;
+  within_budget?: boolean;
   measurements: Array<{
     name: string;
     ok: boolean;

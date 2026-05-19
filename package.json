@@ -12,7 +12,8 @@
     "verify": "bun run check && bun test && bun run build",
     "start": "bun run src/cli.ts",
     "build": "bun build src/cli.ts --compile --outfile dist/zdr",
-    "smoke": "bun run src/cli.ts --version"
+    "smoke": "bun run src/cli.ts --version",
+    "timing": "bun run build && bun run scripts/timing-baseline.ts"
   },
   "dependencies": {
     "@earendil-works/pi-ai": "^0.74.0"

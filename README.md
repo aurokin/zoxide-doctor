@@ -112,9 +112,10 @@ Local timing diagnostics:
 ```bash
 zdr debug-timing
 zdr debug-timing ascan
+zdr debug-timing ascan --budget-ms 150
 ```
 
-`debug-timing` prints JSON for local paths such as version metadata, correction-cache reads, exact-query cache lookup when a query is supplied, and no-arg recovery context gathering before any provider call.
+`debug-timing` prints JSON for local paths such as version metadata, correction-cache reads, exact-query cache lookup when a query is supplied, and no-arg recovery context gathering before any provider call. `--budget-ms` adds budget metadata to the JSON without changing the command's exit status.
 
 ## Limits
 
@@ -138,6 +139,16 @@ bun run verify
 bun run smoke
 bun run src/cli.ts provider-smoke
 ```
+
+Collect local executable timing:
+
+```bash
+bun run timing
+bun run timing -- ascan
+bun run timing -- --repeat 25 --budget-ms 150 ascan
+```
+
+`bun run timing` builds `dist/zdr`, runs `zdr debug-timing` repeatedly, and prints JSON with wall-clock p50/p95/max timings. Wall-clock timing includes executable startup; `command_total_ms` is the in-process diagnostic total.
 
 Build the standalone executable:
 
