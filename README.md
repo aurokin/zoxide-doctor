@@ -107,6 +107,15 @@ zdr debug-corrections
 zdr forget ascan
 ```
 
+Local timing diagnostics:
+
+```bash
+zdr debug-timing
+zdr debug-timing ascan
+```
+
+`debug-timing` prints JSON for local paths such as version metadata, correction-cache reads, exact-query cache lookup when a query is supplied, and no-arg recovery context gathering before any provider call.
+
 ## Limits
 
 - zsh is the only supported shell integration right now.

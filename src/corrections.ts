@@ -14,6 +14,8 @@ export type CorrectionLookup =
   | { status: "miss"; query: string }
   | { status: "stale"; query: string; stalePath: string };
 
+export type CorrectionInspection = CorrectionLookup;
+
 export type CachePaths = {
   cacheDir: string;
   corrections: string;
@@ -63,6 +65,18 @@ export async function lookupCorrection(query: string): Promise<CorrectionLookup>
   cache[query] = updated;
   await writeCorrectionCache(cache);
   return { status: "hit", query, entry: updated };
+}
+
+export async function inspectCorrection(query: string): Promise<CorrectionInspection> {
+  const cache = await readCorrectionCache();
+  const entry = cache[query];
+  if (!entry) {
+    return { status: "miss", query };
+  }
+  if (!(await pathExists(entry.path))) {
+    return { status: "stale", query, stalePath: entry.path };
+  }
+  return { status: "hit", query, entry };
 }
 
 export async function storeCorrection(input: {

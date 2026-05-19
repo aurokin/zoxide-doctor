@@ -5,9 +5,16 @@ import { tmpdir } from "node:os";
 import { main } from "./cli.js";
 import type { Candidate } from "./candidates.js";
 import type { CorrectionLookup } from "./corrections.js";
-import { readCorrectionCache, storeCorrection, writeCorrectionCache, type CorrectionEntry } from "./corrections.js";
+import {
+  inspectCorrection,
+  readCorrectionCache,
+  storeCorrection,
+  writeCorrectionCache,
+  type CorrectionEntry,
+} from "./corrections.js";
 
 let previousXdgCacheHome: string | undefined;
+let previousXdgStateHome: string | undefined;
 let previousLog: typeof console.log;
 let previousError: typeof console.error;
 let tempDir: string;
@@ -16,10 +23,12 @@ let stderr: string[];
 
 beforeEach(async () => {
   previousXdgCacheHome = process.env.XDG_CACHE_HOME;
+  previousXdgStateHome = process.env.XDG_STATE_HOME;
   previousLog = console.log;
   previousError = console.error;
   tempDir = await mkdtemp(join(tmpdir(), "zdr-cli-"));
   process.env.XDG_CACHE_HOME = tempDir;
+  process.env.XDG_STATE_HOME = tempDir;
   stdout = [];
   stderr = [];
   console.log = (...args: unknown[]) => {
@@ -35,6 +44,11 @@ afterEach(async () => {
     delete process.env.XDG_CACHE_HOME;
   } else {
     process.env.XDG_CACHE_HOME = previousXdgCacheHome;
+  }
+  if (previousXdgStateHome === undefined) {
+    delete process.env.XDG_STATE_HOME;
+  } else {
+    process.env.XDG_STATE_HOME = previousXdgStateHome;
   }
   console.log = previousLog;
   console.error = previousError;
@@ -296,13 +310,82 @@ describe("main correction cache commands", () => {
 
     const script = stdout.join("\n");
     expect(script).toContain("debug-corrections");
+    expect(script).toContain("debug-timing");
     expect(script).toContain("forget");
+  });
+});
+
+describe("main timing command", () => {
+  test("prints local timing JSON with skipped cache lookup when query is omitted", async () => {
+    expect(await main(["debug-timing"], testDeps())).toEqual({ code: 0 });
+
+    const payload = JSON.parse(stdout.join("\n")) as TimingPayload;
+    expect(payload.schema_version).toBe(1);
+    expect(payload.command).toBe("debug-timing");
+    expect(payload.measurements.map((measurement) => measurement.name)).toEqual([
+      "version",
+      "debug-corrections",
+      "direct-query-cache-lookup",
+      "recovery-context",
+    ]);
+    expect(payload.measurements.every((measurement) => measurement.duration_ms >= 0)).toBe(true);
+    expect(payload.measurements.find((measurement) => measurement.name === "direct-query-cache-lookup")).toMatchObject({
+      ok: false,
+      skipped: true,
+    });
+    expect(payload.measurements.find((measurement) => measurement.name === "recovery-context")?.ok).toBe(false);
+    expect(stderr).toEqual([]);
+  });
+
+  test("measures cache hit and recovery context without provider selection", async () => {
+    const target = join(tempDir, "agentscan");
+    await mkdir(target);
+    await storeCorrection({
+      query: "ascan",
+      path: target,
+      now: new Date("2026-05-18T00:00:00.000Z"),
+    });
+    await main(["record-z", "--attempt", "timing-1", "--before", tempDir, "--shell", "zsh", "--", "ascan"]);
+    await main(["finish-z", "--attempt", "timing-1", "--after", join(tempDir, "wrong"), "--status", "0"]);
+    stdout = [];
+    stderr = [];
+
+    expect(
+      await main(["debug-timing", "ascan"], {
+        ...testDeps(),
+        loadZoxideEntries: async () => [
+          { path: target, score: 10, rank: 1 },
+          { path: join(tempDir, "wrong"), score: 9, rank: 2 },
+        ],
+      }),
+    ).toEqual({ code: 0 });
+
+    const payload = JSON.parse(stdout.join("\n")) as TimingPayload;
+    expect(payload.measurements.find((measurement) => measurement.name === "direct-query-cache-lookup")).toMatchObject({
+      ok: true,
+      metadata: {
+        query: "ascan",
+        status: "hit",
+      },
+    });
+    expect(payload.measurements.find((measurement) => measurement.name === "recovery-context")).toMatchObject({
+      ok: true,
+      metadata: {
+        query: "ascan",
+        zoxide_entry_count: 2,
+        candidate_count: 2,
+        rejected_path_count: 0,
+      },
+    });
+    expect(stderr).toEqual([]);
+    expect((await readCorrectionCache()).ascan?.hits).toBe(0);
   });
 });
 
 function testDeps(input: { lookup?: CorrectionLookup; storeCorrection?: StoreCorrection } = {}) {
   return {
     lookupCorrection: input.lookup ? async () => input.lookup as CorrectionLookup : readCorrectionFromCache,
+    inspectCorrection,
     storeCorrection: input.storeCorrection ?? storeCorrection,
     loadZoxideEntries: async () => {
       throw new Error("unexpected zoxide load");
@@ -334,3 +417,16 @@ function selectionResult(candidate: Candidate | null, reason = "selected", confi
     usage: null,
   };
 }
+
+type TimingPayload = {
+  schema_version: 1;
+  command: "debug-timing";
+  measurements: Array<{
+    name: string;
+    ok: boolean;
+    skipped?: boolean;
+    duration_ms: number;
+    metadata?: Record<string, unknown>;
+    error?: string;
+  }>;
+};

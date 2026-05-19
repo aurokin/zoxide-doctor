@@ -4,10 +4,12 @@ import packageJson from "../package.json" with { type: "json" };
 import { buildCandidates, type Candidate } from "./candidates.js";
 import {
   forgetCorrection,
+  inspectCorrection,
   lookupCorrection,
   readCorrectionCache,
   storeCorrection,
   type CorrectionEntry,
+  type CorrectionInspection,
   type CorrectionLookup,
 } from "./corrections.js";
 import {
@@ -34,6 +36,7 @@ type SelectCandidate = (input: {
 
 type CliDeps = {
   lookupCorrection: (query: string) => Promise<CorrectionLookup>;
+  inspectCorrection: (query: string) => Promise<CorrectionInspection>;
   storeCorrection: (input: { query: string; path: string; now?: Date }) => Promise<CorrectionEntry>;
   loadZoxideEntries: () => Promise<ZoxideEntry[]>;
   selectCandidate: SelectCandidate;
@@ -78,6 +81,8 @@ export async function main(argv: string[], deps: CliDeps = defaultDeps): Promise
       return debugSelectCommand(args);
     case "debug-corrections":
       return debugCorrectionsCommand();
+    case "debug-timing":
+      return debugTimingCommand(args, deps);
     case "forget":
       return forgetCommand(args);
     case "provider-smoke":
@@ -93,6 +98,7 @@ export async function main(argv: string[], deps: CliDeps = defaultDeps): Promise
 
 const defaultDeps: CliDeps = {
   lookupCorrection,
+  inspectCorrection,
   storeCorrection,
   loadZoxideEntries,
   selectCandidate: async (input) => {
@@ -268,6 +274,115 @@ async function forgetCommand(args: string[]): Promise<CommandResult> {
   }
 }
 
+async function debugTimingCommand(args: string[], deps: CliDeps): Promise<CommandResult> {
+  const query = args.join(" ").trim();
+  const measurements: TimingMeasurement[] = [];
+
+  measurements.push(
+    await measureStep("version", async () => ({
+      version: VERSION,
+    })),
+  );
+  measurements.push(
+    await measureStep("debug-corrections", async () => {
+      const cache = await readCorrectionCache();
+      return {
+        correction_count: Object.keys(cache).length,
+      };
+    }),
+  );
+  if (query.length > 0) {
+    measurements.push(
+      await measureStep("direct-query-cache-lookup", async () => {
+        const lookup = await deps.inspectCorrection(query);
+        return {
+          query,
+          status: lookup.status,
+        };
+      }),
+    );
+  } else {
+    measurements.push({
+      name: "direct-query-cache-lookup",
+      ok: false,
+      skipped: true,
+      duration_ms: 0,
+      error: "provide a query to measure direct-query cache lookup",
+    });
+  }
+  measurements.push(await measureStep("recovery-context", () => measureRecoveryContext(deps)));
+
+  console.log(
+    JSON.stringify(
+      {
+        schema_version: 1,
+        command: "debug-timing",
+        measurements,
+      },
+      null,
+      2,
+    ),
+  );
+  return { code: 0 };
+}
+
+type TimingMeasurement = {
+  name: string;
+  ok: boolean;
+  skipped?: boolean;
+  duration_ms: number;
+  metadata?: Record<string, unknown>;
+  error?: string;
+};
+
+async function measureStep(
+  name: string,
+  fn: () => Promise<Record<string, unknown>> | Record<string, unknown>,
+): Promise<TimingMeasurement> {
+  const start = performance.now();
+  try {
+    const metadata = await fn();
+    return {
+      name,
+      ok: true,
+      duration_ms: elapsedMs(start),
+      metadata,
+    };
+  } catch (error) {
+    return {
+      name,
+      ok: false,
+      duration_ms: elapsedMs(start),
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
+async function measureRecoveryContext(deps: CliDeps): Promise<Record<string, unknown>> {
+  const state = await readLastZState();
+  if (!state) {
+    throw new Error("no recorded z attempt found");
+  }
+  const entries = await deps.loadZoxideEntries();
+  const retry = await readRecoveryRetryForAttempt(state);
+  const candidates = buildCandidates({
+    state,
+    entries,
+    limit: 50,
+    rejectedPaths: retry?.rejected_paths ?? [],
+  });
+  return {
+    query: state.query_argv.join(" "),
+    zoxide_entry_count: entries.length,
+    candidate_count: candidates.length,
+    rejected_path_count: retry?.rejected_paths.length ?? 0,
+  };
+}
+
+function elapsedMs(start: number): number {
+  return Math.max(0, Math.round((performance.now() - start) * 1000) / 1000);
+}
+
 async function recoverCommand(): Promise<CommandResult> {
   try {
     const { state, result, retry } = await runSelection(50, { announceRetry: true });
@@ -413,6 +528,8 @@ Usage:
   zdr debug-select   Ask the model to select from recorded candidates
   zdr debug-corrections
                       Print direct-query correction cache
+  zdr debug-timing [query]
+                      Measure local timing paths as JSON
   zdr forget <query> Remove one exact direct-query correction
   zdr provider-smoke  Verify Pi/OpenRouter import and model lookup
   zdr provider-smoke --live
@@ -448,7 +565,7 @@ function zshInitScript(): string {
     "",
     "zdr() {",
     "  case \"$1\" in",
-    "    init|record-z|finish-z|clear-recovery-retry|debug-state|debug-candidates|debug-select|debug-corrections|forget|provider-smoke|--*|-*)",
+    "    init|record-z|finish-z|clear-recovery-retry|debug-state|debug-candidates|debug-select|debug-corrections|debug-timing|forget|provider-smoke|--*|-*)",
     "      command zdr \"$@\"",
     "      return $?",
     "      ;;",

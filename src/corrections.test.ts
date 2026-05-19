@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import {
   getCachePaths,
   forgetCorrection,
+  inspectCorrection,
   lookupCorrection,
   readCorrectionCache,
   storeCorrection,
@@ -83,6 +84,51 @@ describe("correction cache", () => {
       stalePath: join(tempDir, "missing"),
     });
     expect(await readCorrectionCache()).toEqual({});
+  });
+
+  test("inspects hits without incrementing hit count", async () => {
+    const target = join(tempDir, "agentscan");
+    await mkdir(target);
+    await storeCorrection({
+      query: "ascan",
+      path: target,
+      now: new Date("2026-05-18T00:00:00.000Z"),
+    });
+
+    expect(await inspectCorrection("ascan")).toEqual({
+      status: "hit",
+      query: "ascan",
+      entry: {
+        path: target,
+        first_resolved: "2026-05-18T00:00:00.000Z",
+        hits: 0,
+      },
+    });
+    expect((await readCorrectionCache()).ascan?.hits).toBe(0);
+  });
+
+  test("inspects stale paths without evicting them", async () => {
+    const missing = join(tempDir, "missing");
+    await writeCorrectionCache({
+      ascan: {
+        path: missing,
+        first_resolved: "2026-05-18T00:00:00.000Z",
+        hits: 3,
+      },
+    });
+
+    expect(await inspectCorrection("ascan")).toEqual({
+      status: "stale",
+      query: "ascan",
+      stalePath: missing,
+    });
+    expect(await readCorrectionCache()).toEqual({
+      ascan: {
+        path: missing,
+        first_resolved: "2026-05-18T00:00:00.000Z",
+        hits: 3,
+      },
+    });
   });
 
   test("resets metadata when an exact query is remapped to a different path", async () => {
