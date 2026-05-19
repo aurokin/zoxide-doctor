@@ -56,7 +56,7 @@ export async function main(argv: string[], deps: CliDeps = defaultDeps): Promise
   }
 
   if (!command) {
-    return recoverCommand();
+    return recoverCommand(deps);
   }
 
   if (command === "--version" || command === "-V") {
@@ -220,7 +220,7 @@ async function debugSelectCommand(args: string[]): Promise<CommandResult> {
   }
 
   try {
-    const { state, result, rejectedPaths } = await runSelection(limit.value);
+    const { state, result, rejectedPaths } = await runDebugSelection(limit.value);
     console.log(
       JSON.stringify(
         {
@@ -441,9 +441,18 @@ function elapsedMs(start: number): number {
   return Math.max(0, Math.round((performance.now() - start) * 1000) / 1000);
 }
 
-async function recoverCommand(): Promise<CommandResult> {
+async function recoverCommand(deps: CliDeps): Promise<CommandResult> {
   try {
-    const { state, result, retry } = await runSelection(50, { announceRetry: true });
+    const state = await readLastZState();
+    if (!state) {
+      throw new Error("no recorded z attempt found");
+    }
+    const retry = await readRecoveryRetryForAttempt(state);
+    const mode = chooseRecoveryMode(retry);
+    if (mode === "picker") {
+      throw new Error("interactive picker fallback is not implemented yet");
+    }
+    const { result } = await runSelection(state, retry, 50, deps, { announceRetry: mode === "retry-model" });
     if (!result.candidate) {
       console.error(result.selection.reason ? `zdr: ${result.selection.reason}` : "zdr: no candidate selected");
       return { code: 1 };
@@ -459,6 +468,18 @@ async function recoverCommand(): Promise<CommandResult> {
     console.error(`zdr: ${error instanceof Error ? error.message : String(error)}`);
     return { code: 1 };
   }
+}
+
+type RecoveryMode = "model" | "retry-model" | "picker";
+
+function chooseRecoveryMode(retry: Awaited<ReturnType<typeof readRecoveryRetryForAttempt>>): RecoveryMode {
+  if (!retry || retry.rejected_paths.length === 0) {
+    return "model";
+  }
+  if (retry.rejected_paths.length === 1) {
+    return "retry-model";
+  }
+  return "picker";
 }
 
 async function directQueryCommand(queryArgv: string[], deps: CliDeps): Promise<CommandResult> {
@@ -541,7 +562,29 @@ function directQueryState(queryArgv: string[], deps: CliDeps): FinishedZState {
   };
 }
 
-async function runSelection(limit: number, options: { announceRetry?: boolean } = {}) {
+async function runSelection(
+  state: FinishedZState,
+  retry: Awaited<ReturnType<typeof readRecoveryRetryForAttempt>>,
+  limit: number,
+  deps: CliDeps,
+  options: { announceRetry?: boolean } = {},
+) {
+  const entries = await deps.loadZoxideEntries();
+  const rejectedPaths = retry?.rejected_paths ?? [];
+  if (options.announceRetry) {
+    console.error("zdr: thinking harder...");
+  }
+  const candidates = buildCandidates({
+    state,
+    entries,
+    limit,
+    rejectedPaths,
+  });
+  const result = await deps.selectCandidate({ state, candidates, rejectedPaths });
+  return { candidates, result, rejectedPaths };
+}
+
+async function runDebugSelection(limit: number) {
   const state = await readLastZState();
   if (!state) {
     throw new Error("no recorded z attempt found");
@@ -550,9 +593,6 @@ async function runSelection(limit: number, options: { announceRetry?: boolean } 
   const entries = await loadZoxideEntries();
   const retry = await readRecoveryRetryForAttempt(state);
   const rejectedPaths = retry?.rejected_paths ?? [];
-  if (retry && options.announceRetry) {
-    console.error("zdr: thinking harder...");
-  }
   const candidates = buildCandidates({
     state,
     entries,

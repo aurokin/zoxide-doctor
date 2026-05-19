@@ -399,6 +399,95 @@ describe("main timing command", () => {
   });
 });
 
+describe("main recovery routing", () => {
+  test("first no-arg recovery uses model selection without retry announcement", async () => {
+    const selected = join(tempDir, "agentscan");
+    await mkdir(selected);
+    await recordFinishedZAttempt("recovery-1", join(tempDir, "wrong"), "ascan");
+
+    expect(
+      await main([], {
+        ...testDeps(),
+        loadZoxideEntries: async () => [{ path: selected, score: 10, rank: 1 }],
+        selectCandidate: async ({ rejectedPaths, candidates }) => {
+          expect(rejectedPaths).toEqual([]);
+          return selectionResult(candidates[0] ?? null);
+        },
+      }),
+    ).toEqual({ code: 0 });
+
+    expect(stdout).toEqual([selected]);
+    expect(stderr).toEqual([]);
+  });
+
+  test("second no-arg recovery still uses model selection with rejected path context", async () => {
+    const first = join(tempDir, "agentscan-old");
+    const second = join(tempDir, "agentscan");
+    await mkdir(first);
+    await mkdir(second);
+    await recordFinishedZAttempt("recovery-2", join(tempDir, "wrong"), "ascan");
+    await main([], {
+      ...testDeps(),
+      loadZoxideEntries: async () => [
+        { path: first, score: 10, rank: 1 },
+        { path: second, score: 9, rank: 2 },
+      ],
+      selectCandidate: async ({ candidates }) => selectionResult(candidates.find((candidate) => candidate.path === first) ?? null),
+    });
+    stdout = [];
+    stderr = [];
+
+    expect(
+      await main([], {
+        ...testDeps(),
+        loadZoxideEntries: async () => [
+          { path: first, score: 10, rank: 1 },
+          { path: second, score: 9, rank: 2 },
+        ],
+        selectCandidate: async ({ rejectedPaths, candidates }) => {
+          expect(rejectedPaths).toEqual([first]);
+          expect(candidates.map((candidate) => candidate.path)).not.toContain(first);
+          return selectionResult(candidates.find((candidate) => candidate.path === second) ?? null);
+        },
+      }),
+    ).toEqual({ code: 0 });
+
+    expect(stdout).toEqual([second]);
+    expect(stderr).toEqual(["zdr: thinking harder..."]);
+  });
+
+  test("third no-arg recovery routes to picker fallback instead of model selection", async () => {
+    const first = join(tempDir, "agentscan-old");
+    const second = join(tempDir, "agentscan-other");
+    await mkdir(first);
+    await mkdir(second);
+    await recordFinishedZAttempt("recovery-3", join(tempDir, "wrong"), "ascan");
+    await main([], {
+      ...testDeps(),
+      loadZoxideEntries: async () => [
+        { path: first, score: 10, rank: 1 },
+        { path: second, score: 9, rank: 2 },
+      ],
+      selectCandidate: async ({ candidates }) => selectionResult(candidates.find((candidate) => candidate.path === first) ?? null),
+    });
+    await main([], {
+      ...testDeps(),
+      loadZoxideEntries: async () => [
+        { path: first, score: 10, rank: 1 },
+        { path: second, score: 9, rank: 2 },
+      ],
+      selectCandidate: async ({ candidates }) => selectionResult(candidates.find((candidate) => candidate.path === second) ?? null),
+    });
+    stdout = [];
+    stderr = [];
+
+    expect(await main([], testDeps())).toEqual({ code: 1 });
+
+    expect(stdout).toEqual([]);
+    expect(stderr).toEqual(["zdr: interactive picker fallback is not implemented yet"]);
+  });
+});
+
 function testDeps(input: { lookup?: CorrectionLookup; storeCorrection?: StoreCorrection } = {}) {
   return {
     lookupCorrection: input.lookup ? async () => input.lookup as CorrectionLookup : readCorrectionFromCache,
@@ -413,6 +502,13 @@ function testDeps(input: { lookup?: CorrectionLookup; storeCorrection?: StoreCor
     cwd: () => tempDir,
     now: () => new Date("2026-05-18T00:00:00.000Z"),
   };
+}
+
+async function recordFinishedZAttempt(attemptId: string, afterPath: string, ...queryArgv: string[]): Promise<void> {
+  await main(["record-z", "--attempt", attemptId, "--before", tempDir, "--shell", "zsh", "--", ...queryArgv]);
+  await main(["finish-z", "--attempt", attemptId, "--after", afterPath, "--status", "0"]);
+  stdout = [];
+  stderr = [];
 }
 
 async function readCorrectionFromCache(query: string): Promise<CorrectionLookup> {
