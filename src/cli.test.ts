@@ -12,6 +12,7 @@ import {
   writeCorrectionCache,
   type CorrectionEntry,
 } from "./corrections.js";
+import type { PickerInput, PickerResult } from "./picker.js";
 
 let previousXdgCacheHome: string | undefined;
 let previousXdgStateHome: string | undefined;
@@ -456,11 +457,13 @@ describe("main recovery routing", () => {
     expect(stderr).toEqual(["zdr: thinking harder..."]);
   });
 
-  test("third no-arg recovery routes to picker fallback instead of model selection", async () => {
+  test("third no-arg recovery returns selected picker path without model selection", async () => {
     const first = join(tempDir, "agentscan-old");
     const second = join(tempDir, "agentscan-other");
+    const selected = join(tempDir, "agentscan");
     await mkdir(first);
     await mkdir(second);
+    await mkdir(selected);
     await recordFinishedZAttempt("recovery-3", join(tempDir, "wrong"), "ascan");
     await main([], {
       ...testDeps(),
@@ -481,14 +484,70 @@ describe("main recovery routing", () => {
     stdout = [];
     stderr = [];
 
-    expect(await main([], testDeps())).toEqual({ code: 1 });
+    expect(
+      await main([], {
+        ...testDeps({
+          runPicker: async (input) => {
+            expect(input).toEqual({
+              query: "ascan",
+              zoxideEntries: [
+                { path: first, score: 10, rank: 1 },
+                { path: second, score: 9, rank: 2 },
+                { path: selected, score: 8, rank: 3 },
+              ],
+              rejectedPaths: [first, second],
+            });
+            return { status: "selected", path: selected };
+          },
+        }),
+        loadZoxideEntries: async () => [
+          { path: first, score: 10, rank: 1 },
+          { path: second, score: 9, rank: 2 },
+          { path: selected, score: 8, rank: 3 },
+        ],
+      }),
+    ).toEqual({ code: 0 });
+
+    expect(stdout).toEqual([selected]);
+    expect(stderr).toEqual(["zdr: opening picker..."]);
+  });
+
+  test("third no-arg recovery reports picker cancellation", async () => {
+    await recordFinishedZAttempt("recovery-cancel", join(tempDir, "wrong"), "ascan");
+    await seedRejectedRecoveryPaths(["/repo/wrong-1", "/repo/wrong-2"]);
+
+    expect(
+      await main([], {
+        ...testDeps({
+          runPicker: async () => ({ status: "cancelled" }),
+        }),
+        loadZoxideEntries: async () => [{ path: "/repo/right", score: 10, rank: 1 }],
+      }),
+    ).toEqual({ code: 1 });
 
     expect(stdout).toEqual([]);
-    expect(stderr).toEqual(["zdr: interactive picker fallback is not implemented yet"]);
+    expect(stderr).toEqual(["zdr: opening picker...", "zdr: picker cancelled"]);
+  });
+
+  test("third no-arg recovery reports unavailable picker dependency", async () => {
+    await recordFinishedZAttempt("recovery-unavailable", join(tempDir, "wrong"), "ascan");
+    await seedRejectedRecoveryPaths(["/repo/wrong-1", "/repo/wrong-2"]);
+
+    expect(
+      await main([], {
+        ...testDeps({
+          runPicker: async () => ({ status: "unavailable", reason: "fzf is required for interactive picker fallback" }),
+        }),
+        loadZoxideEntries: async () => [{ path: "/repo/right", score: 10, rank: 1 }],
+      }),
+    ).toEqual({ code: 1 });
+
+    expect(stdout).toEqual([]);
+    expect(stderr).toEqual(["zdr: opening picker...", "zdr: fzf is required for interactive picker fallback"]);
   });
 });
 
-function testDeps(input: { lookup?: CorrectionLookup; storeCorrection?: StoreCorrection } = {}) {
+function testDeps(input: { lookup?: CorrectionLookup; storeCorrection?: StoreCorrection; runPicker?: RunPicker } = {}) {
   return {
     lookupCorrection: input.lookup ? async () => input.lookup as CorrectionLookup : readCorrectionFromCache,
     inspectCorrection,
@@ -499,6 +558,11 @@ function testDeps(input: { lookup?: CorrectionLookup; storeCorrection?: StoreCor
     selectCandidate: async () => {
       throw new Error("unexpected model selection");
     },
+    runPicker: input.runPicker
+      ? input.runPicker
+      : async () => {
+          throw new Error("unexpected picker");
+        },
     cwd: () => tempDir,
     now: () => new Date("2026-05-18T00:00:00.000Z"),
   };
@@ -511,12 +575,25 @@ async function recordFinishedZAttempt(attemptId: string, afterPath: string, ...q
   stderr = [];
 }
 
+async function seedRejectedRecoveryPaths(paths: string[]): Promise<void> {
+  for (const path of paths) {
+    await main([], {
+      ...testDeps(),
+      loadZoxideEntries: async () => [{ path, score: 10, rank: 1 }],
+      selectCandidate: async ({ candidates }) => selectionResult(candidates[0] ?? null),
+    });
+  }
+  stdout = [];
+  stderr = [];
+}
+
 async function readCorrectionFromCache(query: string): Promise<CorrectionLookup> {
   const { lookupCorrection } = await import("./corrections.js");
   return lookupCorrection(query);
 }
 
 type StoreCorrection = (input: { query: string; path: string; now?: Date }) => Promise<CorrectionEntry>;
+type RunPicker = (input: PickerInput) => Promise<PickerResult>;
 
 function selectionResult(candidate: Candidate | null, reason = "selected", confidence = candidate ? 0.8 : 0) {
   return {

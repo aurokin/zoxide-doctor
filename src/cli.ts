@@ -22,6 +22,7 @@ import {
   writeRecoveryRetry,
 } from "./shell-state.js";
 import { loadZoxideEntries, type ZoxideEntry } from "./zoxide.js";
+import type { PickerInput, PickerResult } from "./picker.js";
 import type { SelectionResult } from "./provider/select.js";
 
 type CommandResult = {
@@ -40,6 +41,7 @@ type CliDeps = {
   storeCorrection: (input: { query: string; path: string; now?: Date }) => Promise<CorrectionEntry>;
   loadZoxideEntries: () => Promise<ZoxideEntry[]>;
   selectCandidate: SelectCandidate;
+  runPicker: (input: PickerInput) => Promise<PickerResult>;
   cwd: () => string;
   now: () => Date;
 };
@@ -104,6 +106,10 @@ const defaultDeps: CliDeps = {
   selectCandidate: async (input) => {
     const { selectCandidate } = await import("./provider/select.js");
     return selectCandidate(input);
+  },
+  runPicker: async (input) => {
+    const { runPicker } = await import("./picker.js");
+    return runPicker(input);
   },
   cwd: () => process.cwd(),
   now: () => new Date(),
@@ -450,7 +456,10 @@ async function recoverCommand(deps: CliDeps): Promise<CommandResult> {
     const retry = await readRecoveryRetryForAttempt(state);
     const mode = chooseRecoveryMode(retry);
     if (mode === "picker") {
-      throw new Error("interactive picker fallback is not implemented yet");
+      if (!retry) {
+        throw new Error("no recovery retry state found");
+      }
+      return pickerRecoveryCommand(state, retry, deps);
     }
     const { result } = await runSelection(state, retry, 50, deps, { announceRetry: mode === "retry-model" });
     if (!result.candidate) {
@@ -467,6 +476,31 @@ async function recoverCommand(deps: CliDeps): Promise<CommandResult> {
   } catch (error) {
     console.error(`zdr: ${error instanceof Error ? error.message : String(error)}`);
     return { code: 1 };
+  }
+}
+
+async function pickerRecoveryCommand(
+  state: FinishedZState,
+  retry: NonNullable<Awaited<ReturnType<typeof readRecoveryRetryForAttempt>>>,
+  deps: CliDeps,
+): Promise<CommandResult> {
+  const entries = await deps.loadZoxideEntries();
+  console.error("zdr: opening picker...");
+  const result = await deps.runPicker({
+    query: state.query_argv.join(" "),
+    zoxideEntries: entries,
+    rejectedPaths: retry.rejected_paths,
+  });
+  switch (result.status) {
+    case "selected":
+      console.log(result.path);
+      return { code: 0 };
+    case "cancelled":
+      console.error("zdr: picker cancelled");
+      return { code: 1 };
+    case "unavailable":
+      console.error(`zdr: ${result.reason}`);
+      return { code: 1 };
   }
 }
 

@@ -28,6 +28,7 @@ Implemented:
 - model-backed candidate selection with `zdr debug-select`.
 - no-arg recovery mode that prints the selected path to stdout.
 - repeated no-arg recovery that excludes prior bad `zdr` suggestions.
+- third-attempt picker fallback over zoxide candidates.
 - direct lookup with `zdr <query>`.
 - local correction cache for direct-query hits at `$XDG_CACHE_HOME/zdr/corrections.json`.
 - manual correction-cache commands:
@@ -36,7 +37,7 @@ Implemented:
 
 Not implemented yet:
 
-- third-attempt picker fallback.
+- `fd` directory scan augmentation for picker fallback.
 - shell support beyond zsh.
 
 ## Install
@@ -92,6 +93,8 @@ zdr
 
 If the first repair is also wrong, run `zdr` again. The second no-arg recovery excludes the previous `zdr` suggestion.
 
+If the second repair is wrong too, run `zdr` a third time. The third recovery opens an `fzf` picker seeded with the original query and zoxide-ranked candidates.
+
 Experimental direct lookup:
 
 ```bash
@@ -120,7 +123,8 @@ zdr debug-timing ascan --budget-ms 150
 ## Limits
 
 - zsh is the only supported shell integration right now.
-- Third-attempt picker fallback is not implemented yet.
+- Third-attempt picker fallback requires `fzf`.
+- `fd` directory scan augmentation for picker fallback is not wired into recovery yet.
 - Provider-backed paths require `OPENROUTER_API_KEY`.
 - Correction memory is separate from zoxide and does not change zoxide frecency scores.
 
