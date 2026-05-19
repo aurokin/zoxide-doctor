@@ -30,11 +30,89 @@ Implemented:
 - repeated no-arg recovery that excludes prior bad `zdr` suggestions.
 - direct lookup with `zdr <query>`.
 - local correction cache for direct-query hits at `$XDG_CACHE_HOME/zdr/corrections.json`.
+- manual correction-cache commands:
+  - `zdr debug-corrections`
+  - `zdr forget <query>`
 
 Not implemented yet:
 
 - third-attempt picker fallback.
-- manual correction-cache management commands.
+- shell support beyond zsh.
+
+## Install
+
+Prerequisites:
+
+- [Bun](https://bun.sh/)
+- [zoxide](https://github.com/ajeetdsouza/zoxide)
+- zsh
+- `OPENROUTER_API_KEY` for model-backed recovery and direct-query cache misses
+
+Build the standalone executable:
+
+```bash
+bun install
+bun run build
+```
+
+Put `dist/zdr` somewhere on `PATH`. For local development, one simple option is:
+
+```bash
+mkdir -p ~/.local/bin
+ln -sf "$PWD/dist/zdr" ~/.local/bin/zdr
+```
+
+Verify:
+
+```bash
+zdr --version
+zdr provider-smoke
+```
+
+## Shell Setup
+
+Initialize zoxide first, then source Zoxide Doctor's zsh integration:
+
+```zsh
+eval "$(zoxide init zsh)"
+eval "$(zdr init zsh)"
+```
+
+The generated integration wraps `z` to record the last zoxide attempt and defines a `zdr` shell function that changes directory when the executable prints a path.
+
+## Usage
+
+Primary recovery flow:
+
+```bash
+z ascan
+# zoxide lands in the wrong directory
+zdr
+```
+
+If the first repair is also wrong, run `zdr` again. The second no-arg recovery excludes the previous `zdr` suggestion.
+
+Experimental direct lookup:
+
+```bash
+zdr ascan
+```
+
+`zdr <query>` checks the local correction cache first. On a cache miss or stale path, it falls back to zoxide candidates plus model selection. High-confidence model selections are stored for future exact-query cache hits.
+
+Correction-cache commands:
+
+```bash
+zdr debug-corrections
+zdr forget ascan
+```
+
+## Limits
+
+- zsh is the only supported shell integration right now.
+- Third-attempt picker fallback is not implemented yet.
+- Provider-backed paths require `OPENROUTER_API_KEY`.
+- Correction memory is separate from zoxide and does not change zoxide frecency scores.
 
 ## Development
 
@@ -97,17 +175,9 @@ Run no-arg recovery. stdout is path-only so the shell wrapper can `cd` safely:
 OPENROUTER_API_KEY=... XDG_STATE_HOME="$tmp" bun run src/cli.ts
 ```
 
-## Direct Query Cache
+## Cache Location
 
-`zdr <query>` first checks the local correction cache. If an exact query is cached and the path still exists, stdout is path-only and no provider call is made:
-
-```bash
-zdr ascan
-```
-
-On a cache miss or stale path, `zdr <query>` falls back to zoxide candidates plus model selection. High-confidence model selections are stored for future exact-query cache hits. The cache is separate from zoxide's database and does not boost frecency scores.
-
-Default cache path:
+Default correction-cache path:
 
 ```text
 ~/.cache/zdr/corrections.json
