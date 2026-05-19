@@ -2,9 +2,9 @@
 
 ## Current Status
 
-Status: v0.1 implementation in progress.
+Status: v0.2 implementation in progress.
 
-The project currently has the v0.1 CLI scaffold, zsh shell-state capture, no-arg recovery, Pi/OpenRouter selection, candidate generation, privacy redaction, and unit/verify coverage in place. The core decisions are locked:
+The project currently has the v0.1 core recovery loop plus v0.2 direct-query correction memory in place. The core decisions are locked:
 
 - Primary workflow: `z <query>` first, then no-arg `zdr` if zoxide lands in the wrong directory.
 - Repeated no-arg `zdr` calls are the rejection/escalation signal.
@@ -15,13 +15,15 @@ The project currently has the v0.1 CLI scaffold, zsh shell-state capture, no-arg
 - Provider layer: Pi provider/model SDK (`@earendil-works/pi-ai`), with OpenRouter as the v0.1 default provider.
 - Scope boundary: use Pi's completion/model APIs only; do not use Pi's agent loop, coding-agent harness, TUI, tool execution, or session machinery.
 
-Current implementation slice: repeated no-arg `zdr` calls record rejected recovery suggestions so the next recovery attempt can try a different candidate.
+Current implementation status: no-arg recovery records rejected `zdr` suggestions for repeat attempts, and `zdr <query>` uses local correction-cache hits before falling back to model selection and caching high-confidence direct-query results.
 
 ## Release Plan
 
 ### v0.1 — Core Recovery Loop
 
 Goal: ship the smallest useful version of Zoxide Doctor.
+
+Status: implemented.
 
 Features:
 
@@ -49,6 +51,8 @@ Exit criteria:
 ### v0.2 — Direct Lookup and Correction Memory
 
 Goal: add the experimental shortcut path without changing the main product loop.
+
+Status: implemented, pending docs/review polish.
 
 Features:
 
@@ -123,11 +127,7 @@ Exit criteria:
 
 ## Near-Term Implementation Tasks
 
-1. Refresh or repoint the local Pi checkout from `~/code/upstream/pi-mono` to `https://github.com/earendil-works/pi`.
-2. Verify `@earendil-works/pi-ai` works under Bun for OpenRouter with `completeSimple`.
-3. Scaffold the Bun TypeScript CLI.
-4. Implement `zdr init zsh` shell integration.
-5. Implement `record-z` / `finish-z` state capture.
-6. Implement zoxide DB loading and candidate scoring.
-7. Implement the first OpenRouter model call through Pi.
-8. Measure cold start for local-only and network paths.
+1. Document install and shell initialization flow.
+2. Add manual correction-cache inspection/removal commands.
+3. Measure cold start for local-only, cache-hit, context-gathering, and network paths.
+4. Decide whether v0.3 picker fallback needs `fd`/`fzf` dependency checks or bundled alternatives.

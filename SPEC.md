@@ -111,12 +111,12 @@ A behavioral signal — *"was the previous shell command also zdr?"* — drives 
 | Call # | User action | Reasoning | Behavior |
 |--------|-------------|-----------|----------|
 | 1st    | `zdr` after bad `z` jump | off | Snappy. LLM picks from zoxide DB + recorded jump context. |
-| 2nd    | `zdr` again after bad zdr correction | `high` | Marker present → previous suggestion was rejected. Inject rejected paths into prompt as `Already tried (wrong): [...]`. Print `thinking harder...` to stderr so the user knows zdr heard them. |
+| 2nd    | `zdr` again after bad zdr correction | `high` | Retry state present → previous suggestion was rejected. Inject rejected paths into prompt as `Already tried (wrong): [...]`. Print `thinking harder...` to stderr so the user knows zdr heard them. |
 | 3rd    | `zdr` again after another bad correction | n/a | Bail to `fd -t d --hidden . ~ \| fzf --query="<original>"`, merged with `zoxide query -l` for frecency ranking. Whatever the user picks is returned as the target. |
 
-### 5.1 Escalation marker
+### 5.1 Recovery retry state
 
-A file at `$XDG_CACHE_HOME/zdr/escalate` (default `~/.cache/zdr/escalate`) containing the previous run's `{query, pwd, suggested_paths}`. Its **mere presence** means "the previous shell command was no-arg `zdr`." The shell preexec hook (§9) deletes it on any command that is not no-arg `zdr`.
+A file at `$XDG_STATE_HOME/zdr/recovery_retry.json` (default `~/.local/state/zdr/recovery_retry.json`) records the active recovery retry for the last recorded `z` attempt. It contains the original z attempt id/query, the original wrong landing path, and rejected `zdr` suggestion paths. Its presence for the current `last_z.json` means "the previous shell command was no-arg `zdr`." The shell preexec hook (§9) deletes it on any command that is not no-arg `zdr`.
 
 ## 6. Context Gathering
 
@@ -127,7 +127,7 @@ The prompt is small on purpose. Recovery mode does not send broad shell history 
 - **Before/after pwd**: where the user was before zoxide and where zoxide landed.
 - **Local directory candidates**: optional bounded directory scan when zoxide candidates are weak.
 - **Git state** (if cheap): repo root and current branch for before/after pwd.
-- **Rejected paths** (2nd+ call only): from the escalation marker.
+- **Rejected paths** (2nd+ call only): from recovery retry state.
 
 ### 6.1 Candidate selection
 
@@ -271,11 +271,14 @@ z() {
   return "$status"
 }
 
-# Escalation marker hook
+# Recovery retry hook
 _zdr_preexec() {
   case "$1" in
-    zdr) ;;                                         # keep marker only for recovery retry
-    *) rm -f "${XDG_CACHE_HOME:-$HOME/.cache}/zdr/escalate" ;;
+    zdr) ;;                                        # keep retry state only for no-arg recovery retry
+    *)
+      local retry="${XDG_STATE_HOME:-$HOME/.local/state}/zdr/recovery_retry.json"
+      [[ -e "$retry" ]] && rm -f "$retry"
+      ;;
   esac
 }
 preexec_functions+=(_zdr_preexec)   # zsh syntax; bash uses DEBUG trap
@@ -301,7 +304,8 @@ Lookup flow for `zdr <query>`:
 
 1. Check cache. If hit and `path` still exists on disk → return immediately and increment `hits`.
 2. If hit but `path` no longer exists → evict, fall through to LLM.
-3. If miss → LLM call, store result on success.
+3. If miss → LLM call, return the selected path on success.
+4. Store high-confidence direct-query model selections for future exact-query cache hits.
 
 This cache is not zoxide training and should not boost frecency scores. It is personal correction memory for exact direct-query aliases like `ascan -> ~/dev/agentscan`.
 
@@ -315,7 +319,7 @@ Recovery mode may notice that a failed `z` query repeatedly resolves to the same
 remember ascan -> ~/dev/agentscan? [y/N]
 ```
 
-This should be opt-in and out of scope for v0.1. The initial implementation should only record successful direct-query `zdr <query>` resolutions.
+This should be opt-in and out of scope for v0.1. The initial implementation only records high-confidence direct-query `zdr <query>` resolutions.
 
 ## 11. Configuration
 
@@ -344,8 +348,9 @@ zoxide_db_top_n = 50
 local_scan_roots = ["~/code", "~/dev"]
 local_scan_depth = 3
 local_scan_max_dirs = 200
-escalate_marker = "~/.cache/zdr/escalate"
 last_z_state = "~/.local/state/zdr/last_z.json"
+recovery_retry_state = "~/.local/state/zdr/recovery_retry.json"
+correction_cache = "~/.cache/zdr/corrections.json"
 
 [reasoning]
 first_call = "off"
@@ -361,7 +366,7 @@ zdr/
 ├── context        # zoxide DB, candidate scoring, local scans, git state
 ├── prompt         # template + JSON output parsing
 ├── shell_state    # last z attempt read/write
-├── escalate       # marker read/write, reasoning level selection
+├── retry          # recovery retry state, rejected-path tracking
 ├── cache          # correction memory for direct-query mode
 ├── fzf            # 3rd-strike picker
 ├── init           # zdr init <shell> command
