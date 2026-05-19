@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
   getCachePaths,
+  forgetCorrection,
   lookupCorrection,
   readCorrectionCache,
   storeCorrection,
@@ -137,6 +138,37 @@ describe("correction cache", () => {
         path: join(tempDir, "missing"),
       }),
     ).rejects.toThrow("correction target does not exist");
+  });
+
+  test("forgets one exact query mapping", async () => {
+    const firstTarget = join(tempDir, "agentscan");
+    const secondTarget = join(tempDir, "agentchat");
+    await mkdir(firstTarget);
+    await mkdir(secondTarget);
+    await storeCorrection({
+      query: "ascan",
+      path: firstTarget,
+      now: new Date("2026-05-18T00:00:00.000Z"),
+    });
+    await storeCorrection({
+      query: "achat",
+      path: secondTarget,
+      now: new Date("2026-05-18T00:00:00.000Z"),
+    });
+
+    expect(await forgetCorrection("ascan")).toBe(true);
+
+    expect(await readCorrectionCache()).toEqual({
+      achat: {
+        path: secondTarget,
+        first_resolved: "2026-05-18T00:00:00.000Z",
+        hits: 0,
+      },
+    });
+  });
+
+  test("reports when forgetting a missing query mapping", async () => {
+    expect(await forgetCorrection("ascan")).toBe(false);
   });
 
   test("rejects invalid cache schema", async () => {

@@ -205,6 +205,101 @@ describe("main direct query mode", () => {
   });
 });
 
+describe("main correction cache commands", () => {
+  test("prints correction cache JSON", async () => {
+    const target = join(tempDir, "agentscan");
+    await mkdir(target);
+    await storeCorrection({
+      query: "ascan",
+      path: target,
+      now: new Date("2026-05-18T00:00:00.000Z"),
+    });
+
+    expect(await main(["debug-corrections"])).toEqual({ code: 0 });
+
+    expect(JSON.parse(stdout.join("\n"))).toEqual({
+      ascan: {
+        path: target,
+        first_resolved: "2026-05-18T00:00:00.000Z",
+        hits: 0,
+      },
+    });
+    expect(stderr).toEqual([]);
+  });
+
+  test("prints empty correction cache JSON when cache file is missing", async () => {
+    expect(await main(["debug-corrections"])).toEqual({ code: 0 });
+
+    expect(stdout).toEqual(["{}"]);
+    expect(stderr).toEqual([]);
+  });
+
+  test("forgets one exact correction", async () => {
+    const firstTarget = join(tempDir, "agentscan");
+    const secondTarget = join(tempDir, "agentchat");
+    await mkdir(firstTarget);
+    await mkdir(secondTarget);
+    await storeCorrection({
+      query: "ascan",
+      path: firstTarget,
+      now: new Date("2026-05-18T00:00:00.000Z"),
+    });
+    await storeCorrection({
+      query: "achat",
+      path: secondTarget,
+      now: new Date("2026-05-18T00:00:00.000Z"),
+    });
+
+    expect(await main(["forget", "ascan"])).toEqual({ code: 0 });
+
+    expect(stdout).toEqual([]);
+    expect(stderr).toEqual(['zdr: forgot correction for "ascan"']);
+    expect(await readCorrectionCache()).toEqual({
+      achat: {
+        path: secondTarget,
+        first_resolved: "2026-05-18T00:00:00.000Z",
+        hits: 0,
+      },
+    });
+  });
+
+  test("joins multi-word forget query arguments for exact deletion", async () => {
+    const target = join(tempDir, "agent scan");
+    await mkdir(target);
+    await storeCorrection({
+      query: "agent scan",
+      path: target,
+      now: new Date("2026-05-18T00:00:00.000Z"),
+    });
+
+    expect(await main(["forget", "agent", "scan"])).toEqual({ code: 0 });
+
+    expect(await readCorrectionCache()).toEqual({});
+  });
+
+  test("fails clearly when forgetting a missing correction", async () => {
+    expect(await main(["forget", "ascan"])).toEqual({ code: 1 });
+
+    expect(stdout).toEqual([]);
+    expect(stderr).toEqual(['zdr: no cached correction for "ascan"']);
+  });
+
+  test("requires a query for forget", async () => {
+    expect(await main(["forget"])).toEqual({ code: 2 });
+
+    expect(stdout).toEqual([]);
+    expect(stderr).toEqual(["zdr: forget requires a query"]);
+  });
+
+  test("zsh init bypasses correction cache commands", async () => {
+    expect(await main(["init", "zsh"])).toEqual({ code: 0 });
+
+    const script = stdout.join("\n");
+    expect(script).toContain("debug-corrections");
+    expect(script).toContain("forget");
+  });
+});
+
 function testDeps(input: { lookup?: CorrectionLookup; storeCorrection?: StoreCorrection } = {}) {
   return {
     lookupCorrection: input.lookup ? async () => input.lookup as CorrectionLookup : readCorrectionFromCache,

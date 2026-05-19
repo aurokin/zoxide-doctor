@@ -84,6 +84,16 @@ export async function storeCorrection(input: {
   return entry;
 }
 
+export async function forgetCorrection(query: string): Promise<boolean> {
+  const cache = await readCorrectionCache();
+  if (!cache[query]) {
+    return false;
+  }
+  delete cache[query];
+  await writeCorrectionCache(cache);
+  return true;
+}
+
 async function readJson<T>(path: string): Promise<T | null> {
   try {
     return JSON.parse(await readFile(path, "utf8")) as T;

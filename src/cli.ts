@@ -2,7 +2,14 @@
 
 import packageJson from "../package.json" with { type: "json" };
 import { buildCandidates, type Candidate } from "./candidates.js";
-import { lookupCorrection, storeCorrection, type CorrectionEntry, type CorrectionLookup } from "./corrections.js";
+import {
+  forgetCorrection,
+  lookupCorrection,
+  readCorrectionCache,
+  storeCorrection,
+  type CorrectionEntry,
+  type CorrectionLookup,
+} from "./corrections.js";
 import {
   clearRecoveryRetry,
   type FinishedZState,
@@ -69,6 +76,10 @@ export async function main(argv: string[], deps: CliDeps = defaultDeps): Promise
       return debugCandidatesCommand(args);
     case "debug-select":
       return debugSelectCommand(args);
+    case "debug-corrections":
+      return debugCorrectionsCommand();
+    case "forget":
+      return forgetCommand(args);
     case "provider-smoke":
       return providerSmokeCommand(args);
     default:
@@ -227,6 +238,36 @@ async function debugSelectCommand(args: string[]): Promise<CommandResult> {
   }
 }
 
+async function debugCorrectionsCommand(): Promise<CommandResult> {
+  try {
+    console.log(JSON.stringify(await readCorrectionCache(), null, 2));
+    return { code: 0 };
+  } catch (error) {
+    console.error(`zdr: ${error instanceof Error ? error.message : String(error)}`);
+    return { code: 1 };
+  }
+}
+
+async function forgetCommand(args: string[]): Promise<CommandResult> {
+  const query = args.join(" ").trim();
+  if (query.length === 0) {
+    console.error("zdr: forget requires a query");
+    return { code: 2 };
+  }
+
+  try {
+    if (await forgetCorrection(query)) {
+      console.error(`zdr: forgot correction for ${JSON.stringify(query)}`);
+      return { code: 0 };
+    }
+    console.error(`zdr: no cached correction for ${JSON.stringify(query)}`);
+    return { code: 1 };
+  } catch (error) {
+    console.error(`zdr: ${error instanceof Error ? error.message : String(error)}`);
+    return { code: 1 };
+  }
+}
+
 async function recoverCommand(): Promise<CommandResult> {
   try {
     const { state, result, retry } = await runSelection(50, { announceRetry: true });
@@ -370,6 +411,9 @@ Usage:
   zdr debug-candidates
                       Print candidate list for the recorded z state
   zdr debug-select   Ask the model to select from recorded candidates
+  zdr debug-corrections
+                      Print direct-query correction cache
+  zdr forget <query> Remove one exact direct-query correction
   zdr provider-smoke  Verify Pi/OpenRouter import and model lookup
   zdr provider-smoke --live
                       Make a tiny live OpenRouter completion
@@ -404,7 +448,7 @@ function zshInitScript(): string {
     "",
     "zdr() {",
     "  case \"$1\" in",
-    "    init|record-z|finish-z|clear-recovery-retry|debug-state|debug-candidates|debug-select|provider-smoke|--*|-*)",
+    "    init|record-z|finish-z|clear-recovery-retry|debug-state|debug-candidates|debug-select|debug-corrections|forget|provider-smoke|--*|-*)",
     "      command zdr \"$@\"",
     "      return $?",
     "      ;;",
