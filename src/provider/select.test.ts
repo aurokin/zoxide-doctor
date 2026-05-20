@@ -43,6 +43,24 @@ describe("selectCandidate", () => {
       }),
     ).rejects.not.toThrow("sk-live-secret");
   });
+
+  test("passes reasoning control to Pi when requested", async () => {
+    completeSimple.mockImplementationOnce(async () => ({
+      content: [{ type: "text", text: '{"candidate_id":"c001","confidence":0.8,"reason":"selected"}' }],
+      usage: null,
+    }));
+
+    await selectCandidate({
+      state: finishedZState(),
+      candidates: [candidate()],
+      reasoning: "high",
+    });
+
+    const call = completeSimple.mock.calls[0] as unknown[] | undefined;
+    expect(call?.[2]).toMatchObject({
+      reasoning: "high",
+    });
+  });
 });
 
 function candidate(): Candidate {

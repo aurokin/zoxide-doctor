@@ -129,7 +129,7 @@ Exit criteria:
 
 ## Remaining Hardening Tasks
 
-1. Add real second-attempt model reasoning controls when Pi/provider support is available.
+No remaining hardening tasks are planned for the current roadmap.
 
 ## Remaining Packaging Tasks
 

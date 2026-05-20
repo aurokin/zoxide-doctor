@@ -25,7 +25,7 @@ import {
 } from "./shell-state.js";
 import { loadZoxideEntries, type ZoxideEntry } from "./zoxide.js";
 import type { PickerInput, PickerResult } from "./picker.js";
-import type { SelectionResult } from "./provider/select.js";
+import type { ProviderReasoning, SelectionResult } from "./provider/select.js";
 import { summarizeProviderUsage } from "./provider/usage.js";
 import { scanLocalDirectories } from "./local-scan.js";
 import {
@@ -48,6 +48,7 @@ type SelectCandidate = (input: {
   rejectedPaths?: string[];
   provider?: ZdrConfig["provider"];
   privacy?: ZdrConfig["privacy"];
+  reasoning?: ProviderReasoning;
 }) => Promise<SelectionResult>;
 
 type CliDeps = {
@@ -1138,6 +1139,7 @@ async function runSelection(
     rejectedPaths,
     provider: config.provider,
     privacy: config.privacy,
+    ...(options.announceRetry ? { reasoning: "high" } : {}),
   });
   return { candidates, result, rejectedPaths };
 }

@@ -11,12 +11,15 @@ export type SelectionResult = {
   usage: unknown;
 };
 
+export type ProviderReasoning = "minimal" | "low" | "medium" | "high" | "xhigh";
+
 export async function selectCandidate(input: {
   state: FinishedZState;
   candidates: Candidate[];
   rejectedPaths?: string[];
   provider?: ZdrConfig["provider"];
   privacy?: ZdrConfig["privacy"];
+  reasoning?: ProviderReasoning;
 }): Promise<SelectionResult> {
   const { completeSimple } = await import("@earendil-works/pi-ai");
   const provider = input.provider ?? DEFAULT_CONFIG.provider;
@@ -42,6 +45,7 @@ export async function selectCandidate(input: {
       maxTokens: 1024,
       temperature: 0,
       timeoutMs: 10_000,
+      ...(input.reasoning ? { reasoning: input.reasoning } : {}),
     },
   );
 

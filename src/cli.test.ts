@@ -1387,9 +1387,10 @@ describe("main recovery routing", () => {
           { path: first, score: 10, rank: 1 },
           { path: second, score: 9, rank: 2 },
         ],
-        selectCandidate: async ({ rejectedPaths, candidates }) => {
+        selectCandidate: async ({ rejectedPaths, candidates, reasoning }) => {
           expect(rejectedPaths).toEqual([first]);
           expect(candidates.map((candidate) => candidate.path)).not.toContain(first);
+          expect(reasoning).toBe("high");
           return selectionResult(candidates.find((candidate) => candidate.path === second) ?? null);
         },
       }),

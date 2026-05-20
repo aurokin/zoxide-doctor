@@ -148,7 +148,7 @@ z ascan
 zdr
 ```
 
-If the first repair is also wrong, run `zdr` again. The second no-arg recovery excludes the previous `zdr` suggestion.
+If the first repair is also wrong, run `zdr` again. The second no-arg recovery excludes the previous `zdr` suggestion and requests high reasoning effort through Pi when the configured model/provider supports reasoning controls. Unsupported models ignore that option through Pi.
 
 If the second repair is wrong too, run `zdr` a third time. The third recovery opens an `fzf` picker seeded with the original query, zoxide-ranked candidates, and optional `fd` scan results from the current recovery context.
 
