@@ -20,7 +20,7 @@ Implemented:
 - Bun TypeScript CLI scaffold.
 - Pi provider SDK dependency (`@earendil-works/pi-ai`).
 - OpenRouter/Pi smoke command.
-- zsh and bash init script generation.
+- zsh, bash, and fish init script generation.
 - Shell-state capture commands:
   - `zdr record-z`
   - `zdr finish-z`
@@ -38,7 +38,7 @@ Implemented:
 
 Not implemented yet:
 
-- fish shell integration.
+- install packaging beyond local builds.
 
 ## Install
 
@@ -46,7 +46,7 @@ Prerequisites:
 
 - [Bun](https://bun.sh/)
 - [zoxide](https://github.com/ajeetdsouza/zoxide)
-- zsh or bash
+- zsh, bash, or fish
 - `OPENROUTER_API_KEY` for model-backed recovery and direct-query cache misses
 
 Build the standalone executable:
@@ -87,6 +87,13 @@ bash:
 ```bash
 eval "$(zoxide init bash)"
 eval "$(zdr init bash)"
+```
+
+fish:
+
+```fish
+zoxide init fish | source
+zdr init fish | source
 ```
 
 The generated integration wraps `z` to record the last zoxide attempt and defines a `zdr` shell function that changes directory when the executable prints a path.
@@ -184,7 +191,7 @@ zdr prune-events --max-events 1000
 
 ## Limits
 
-- zsh and bash are supported; fish support is still pending.
+- zsh, bash, and fish are supported.
 - Third-attempt picker fallback requires `fzf`; `fd` is optional and adds bounded local directory scan results when available.
 - Provider-backed paths require `OPENROUTER_API_KEY`.
 - Correction memory is separate from zoxide and does not change zoxide frecency scores.

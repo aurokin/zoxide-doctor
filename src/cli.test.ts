@@ -544,11 +544,27 @@ describe("main correction cache commands", () => {
     expect(result.exitCode).toBe(0);
   });
 
+  test("fish init wraps z and navigation commands", async () => {
+    expect(await main(["init", "fish"])).toEqual({ code: 0 });
+
+    const script = stdout.join("\n");
+    expect(script).toContain("zoxide-doctor fish integration");
+    expect(script).toContain("functions --copy z __zdr_original_z");
+    expect(script).toContain("--shell fish");
+    expect(script).toContain("function zdr");
+    expect(script).toContain("command zdr $argv");
+    expect(script).toContain("cd -- \"$__zdr_target\"");
+    expect(script).toContain("function __zdr_preexec --on-event fish_preexec");
+    expect(script).toContain("case zdr");
+    expect(script).toContain("debug-config");
+    expect(script).toContain("provider-smoke");
+  });
+
   test("rejects unsupported init shells", async () => {
-    expect(await main(["init", "fish"])).toEqual({ code: 2 });
+    expect(await main(["init", "nu"])).toEqual({ code: 2 });
 
     expect(stdout).toEqual([]);
-    expect(stderr).toEqual(["zdr: supported shells: zsh, bash"]);
+    expect(stderr).toEqual(["zdr: supported shells: zsh, bash, fish"]);
   });
 });
 

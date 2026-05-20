@@ -153,8 +153,11 @@ function initCommand(args: string[]): CommandResult {
     case "bash":
       console.log(bashInitScript());
       return { code: 0 };
+    case "fish":
+      console.log(fishInitScript());
+      return { code: 0 };
     default:
-      console.error("zdr: supported shells: zsh, bash");
+      console.error("zdr: supported shells: zsh, bash, fish");
       return { code: 2 };
   }
 }
@@ -1352,6 +1355,70 @@ function bashInitScript(): string {
     "    *) PROMPT_COMMAND=\"__zdr_prompt_command${PROMPT_COMMAND:+;$PROMPT_COMMAND}\" ;;",
     "  esac",
     "fi",
+  ].join("\n");
+}
+
+function fishInitScript(): string {
+  return [
+    "# zoxide-doctor fish integration",
+    "#",
+    "# Source this after zoxide has initialized its z function.",
+    "",
+    "function __zdr_clear_recovery_retry_file",
+    '    set -l __zdr_retry "$XDG_STATE_HOME/zdr/recovery_retry.json"',
+    '    if test -z "$XDG_STATE_HOME"',
+    '        set __zdr_retry "$HOME/.local/state/zdr/recovery_retry.json"',
+    "    end",
+    '    test -e "$__zdr_retry"; and rm -f "$__zdr_retry"',
+    "end",
+    "",
+    "if not functions --query z",
+    '    echo "zdr: zoxide function \'z\' is not defined; run zoxide init before zdr init" >&2',
+    "else",
+    "    if not functions --query __zdr_original_z",
+    "        functions --copy z __zdr_original_z",
+    "    end",
+    "",
+    "    function z",
+    '        set -l __zdr_attempt "fish-$fish_pid-(date +%s%N)-(random)"',
+    "        set __zdr_attempt (string replace --regex --all '[^A-Za-z0-9_.-]' '_' -- $__zdr_attempt)",
+    '        set -l __zdr_before "$PWD"',
+    '        command zdr record-z --attempt "$__zdr_attempt" --before "$__zdr_before" --shell fish -- $argv',
+    "        __zdr_original_z $argv",
+    "        set -l __zdr_status $status",
+    '        command zdr finish-z --attempt "$__zdr_attempt" --after "$PWD" --status "$__zdr_status"',
+    "        return $__zdr_status",
+    "    end",
+    "end",
+    "",
+    "function zdr",
+    '    switch "$argv[1]"',
+    "        case init record-z finish-z clear-recovery-retry debug-state debug-candidates debug-select debug-corrections debug-config debug-events debug-timing debug-provider-timing prune-events forget provider-smoke '--*' '-*'",
+    "            command zdr $argv",
+    "            return $status",
+    "    end",
+    "",
+    "    if test (count $argv) -gt 0",
+    "        __zdr_clear_recovery_retry_file",
+    "    end",
+    "",
+    "    set -l __zdr_target (command zdr $argv)",
+    "    set -l __zdr_status $status",
+    '    if test $__zdr_status -eq 0 -a -n "$__zdr_target"',
+    '        cd -- "$__zdr_target"',
+    "        return $status",
+    "    end",
+    "    return $__zdr_status",
+    "end",
+    "",
+    "function __zdr_preexec --on-event fish_preexec",
+    '    set -l __zdr_commandline "$argv[1]"',
+    '    switch "$__zdr_commandline"',
+    "        case zdr",
+    "        case '*'",
+    "            __zdr_clear_recovery_retry_file",
+    "    end",
+    "end",
   ].join("\n");
 }
 

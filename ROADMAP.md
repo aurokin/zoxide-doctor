@@ -28,7 +28,7 @@ Status: implemented.
 Features:
 
 - Bun TypeScript CLI.
-- zsh and bash integration.
+- zsh, bash, and fish integration.
 - Shell wrapper records `z` attempts to `last_z.json`.
 - no-arg `zdr` repairs the last bad `z` jump.
 - Candidate builder from zoxide DB plus cheap lexical scoring.
@@ -114,7 +114,7 @@ Goal: make Zoxide Doctor reliable enough for regular use.
 Features:
 
 - Finalized config file.
-- Multi-shell support beyond zsh, likely bash then fish.
+- Multi-shell support for zsh, bash, and fish.
 - Expanded privacy settings.
 - Install docs.
 - Homebrew tap and/or install script.
@@ -129,5 +129,4 @@ Exit criteria:
 
 ## Near-Term Implementation Tasks
 
-1. Add fish shell integration.
-2. Document provider/model configuration and install flow.
+1. Document provider/model configuration and install flow.
