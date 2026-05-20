@@ -562,59 +562,121 @@ describe("main correction cache commands", () => {
   });
 
   test("fish init records z attempts with runtime attempt IDs when fish is available", () => {
-    const result = Bun.spawnSync({
-      cmd: [
-        "bash",
-        "-lc",
-        String.raw`
-          command -v fish >/dev/null || { echo "fish unavailable"; exit 0; }
-          tmp=$(mktemp -d)
-          mkdir -p "$tmp/bin" "$tmp/home" "$tmp/target"
-          cat > "$tmp/bin/zdr" <<'EOF'
-#!/usr/bin/env bash
-printf '%s\n' "$*" >> "$ZDR_LOG"
-case "$1" in
-  record-z|finish-z|clear-recovery-retry|debug-state|debug-candidates|debug-select|debug-corrections|debug-config|debug-events|debug-timing|debug-provider-timing|prune-events|forget|provider-smoke|init|--*|-*)
-    exit 0
-    ;;
-esac
-printf '%s\n' "$ZDR_TARGET"
-EOF
-          chmod +x "$tmp/bin/zdr"
-          PATH="$tmp/bin:$PATH" ZDR_LOG="$tmp/log" ZDR_TARGET="$tmp/target" HOME="$tmp/home" fish --no-config -c '
-            function z
-              cd $ZDR_TARGET
-            end
-            bun run --silent src/cli.ts init fish | source
-            cd $HOME
-            z ascan
-            test "$PWD" = "$ZDR_TARGET"; or exit 11
-            cd $HOME
-            zdr
-            test "$PWD" = "$ZDR_TARGET"; or exit 12
-          '
-          status=$?
-          echo "fish smoke ran"
-          cat "$tmp/log"
-          rm -rf "$tmp"
-          exit "$status"
-        `,
-      ],
-      cwd: process.cwd(),
-      stdout: "pipe",
-      stderr: "pipe",
-    });
+    const result = runFishRuntimeTest(`
+function z
+  cd $ZDR_TARGET
+end
+bun run --silent src/cli.ts init fish | source
+cd $HOME
+z ascan
+test "$PWD" = "$ZDR_TARGET"; or exit 11
+cd $HOME
+zdr
+test "$PWD" = "$ZDR_TARGET"; or exit 12
+`);
 
-    expect(result.exitCode).toBe(0);
-    const output = result.stdout.toString();
-    if (output.includes("fish unavailable")) {
+    if (result.skipped) {
       return;
     }
-    expect(output).toContain("fish smoke ran");
-    expect(output).not.toContain("_date___s_N_-_random_");
-    expect(output).toContain("record-z --attempt fish-");
-    expect(output).toContain("--shell fish -- ascan");
-    expect(output).toContain("finish-z --attempt fish-");
+    expect(result.output).toContain("fish smoke ran");
+    expect(result.output).not.toContain("_date___s_N_-_random_");
+    expect(result.output).toContain("record-z --attempt fish-");
+    expect(result.output).toContain("--shell fish -- ascan");
+    expect(result.output).toContain("finish-z --attempt fish-");
+  });
+
+  test("fish init bypasses non-navigation zdr commands when fish is available", () => {
+    const result = runFishRuntimeTest(`
+function z
+  cd $ZDR_TARGET
+end
+bun run --silent src/cli.ts init fish | source
+cd $HOME
+zdr --version >/dev/null
+test "$PWD" = "$HOME"; or exit 11
+zdr debug-config >/dev/null
+test "$PWD" = "$HOME"; or exit 12
+zdr provider-smoke >/dev/null
+test "$PWD" = "$HOME"; or exit 13
+`);
+
+    if (result.skipped) {
+      return;
+    }
+    expect(result.output).toContain("--version");
+    expect(result.output).toContain("debug-config");
+    expect(result.output).toContain("provider-smoke");
+  });
+
+  test("fish init navigates direct queries with spaces when fish is available", () => {
+    const result = runFishRuntimeTest(`
+function z
+  cd $ZDR_TARGET
+end
+bun run --silent src/cli.ts init fish | source
+cd $HOME
+zdr agent scan
+test "$PWD" = "$ZDR_TARGET"; or exit 11
+`);
+
+    if (result.skipped) {
+      return;
+    }
+    expect(result.output).toContain("agent scan");
+  });
+
+  test("fish init clears retry state only for non-zdr preexec events when fish is available", () => {
+    const result = runFishRuntimeTest(`
+function z
+  cd $ZDR_TARGET
+end
+bun run --silent src/cli.ts init fish | source
+mkdir -p "$XDG_STATE_HOME/zdr"
+echo retry > "$XDG_STATE_HOME/zdr/recovery_retry.json"
+emit fish_preexec zdr
+test -e "$XDG_STATE_HOME/zdr/recovery_retry.json"; or exit 11
+emit fish_preexec ls
+test ! -e "$XDG_STATE_HOME/zdr/recovery_retry.json"; or exit 12
+`);
+
+    if (result.skipped) {
+      return;
+    }
+    expect(result.output).toContain("fish smoke ran");
+  });
+
+  test("fish init preserves original z argv and failure status when fish is available", () => {
+    const result = runFishRuntimeTest(`
+function z
+  printf '%s\\n' $argv > "$ZDR_ORIGINAL_Z_LOG"
+  return 7
+end
+bun run --silent src/cli.ts init fish | source
+z foo "bar baz"
+test $status -eq 7; or exit 11
+string match -q foo (sed -n '1p' "$ZDR_ORIGINAL_Z_LOG"); or exit 12
+string match -q "bar baz" (sed -n '2p' "$ZDR_ORIGINAL_Z_LOG"); or exit 13
+`);
+
+    if (result.skipped) {
+      return;
+    }
+    expect(result.output).toContain("--shell fish -- foo bar baz");
+    expect(result.output).toContain("--status 7");
+  });
+
+  test("fish init warns without a zoxide z function when fish is available", () => {
+    const result = runFishRuntimeTest(`
+bun run --silent src/cli.ts init fish | source
+functions --query z; and exit 11
+functions --query __zdr_original_z; and exit 12
+exit 0
+`);
+
+    if (result.skipped) {
+      return;
+    }
+    expect(result.stderr).toContain("zoxide function 'z' is not defined");
   });
 
   test("rejects unsupported init shells", async () => {
@@ -1398,6 +1460,70 @@ async function seedRejectedRecoveryPaths(paths: string[]): Promise<void> {
 async function readCorrectionFromCache(query: string): Promise<CorrectionLookup> {
   const { lookupCorrection } = await import("./corrections.js");
   return lookupCorrection(query);
+}
+
+function runFishRuntimeTest(fishScript: string): { skipped: boolean; output: string; stderr: string } {
+  const result = Bun.spawnSync({
+    cmd: [
+      "bash",
+      "-lc",
+      `
+        command -v fish >/dev/null || { echo "fish unavailable"; exit 0; }
+        tmp=$(mktemp -d)
+        mkdir -p "$tmp/bin" "$tmp/home" "$tmp/target dir" "$tmp/state" "$tmp/config"
+        cat > "$tmp/bin/zdr" <<'ZDR'
+#!/usr/bin/env bash
+printf '%s\\n' "$*" >> "$ZDR_LOG"
+case "$1" in
+  record-z|finish-z|clear-recovery-retry|debug-state|debug-candidates|debug-select|debug-corrections|debug-events|debug-timing|debug-provider-timing|prune-events|forget|init|--*|-*)
+    if [ "$1" = "--version" ]; then
+      printf '0.0.0-test\\n'
+    fi
+    exit 0
+    ;;
+  debug-config)
+    printf '{"source":"test"}\\n'
+    exit 0
+    ;;
+  provider-smoke)
+    printf '{"provider":"test"}\\n'
+    exit 0
+    ;;
+esac
+printf '%s\\n' "$ZDR_TARGET"
+ZDR
+        chmod +x "$tmp/bin/zdr"
+        cat > "$tmp/test.fish" <<'FISH'
+${fishScript}
+FISH
+        : > "$tmp/log"
+        PATH="$tmp/bin:$PATH" \\
+          ZDR_LOG="$tmp/log" \\
+          ZDR_ORIGINAL_Z_LOG="$tmp/original-z.log" \\
+          ZDR_TARGET="$tmp/target dir" \\
+          HOME="$tmp/home" \\
+          XDG_STATE_HOME="$tmp/state" \\
+          XDG_CONFIG_HOME="$tmp/config" \\
+          fish --no-config "$tmp/test.fish"
+        status=$?
+        echo "fish smoke ran"
+        cat "$tmp/log"
+        rm -rf "$tmp"
+        exit "$status"
+      `,
+    ],
+    cwd: process.cwd(),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const output = result.stdout.toString();
+  expect(result.exitCode).toBe(0);
+  return {
+    skipped: output.includes("fish unavailable"),
+    output,
+    stderr: result.stderr.toString(),
+  };
 }
 
 type StoreCorrection = (input: { query: string; path: string; now?: Date }) => Promise<CorrectionEntry>;
