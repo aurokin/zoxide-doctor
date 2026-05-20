@@ -13,6 +13,7 @@ import {
   type CorrectionEntry,
 } from "./corrections.js";
 import type { PickerInput, PickerResult } from "./picker.js";
+import type { TelemetryInput } from "./telemetry.js";
 
 let previousXdgCacheHome: string | undefined;
 let previousXdgStateHome: string | undefined;
@@ -59,6 +60,7 @@ afterEach(async () => {
 describe("main direct query mode", () => {
   test("prints only the cached path on cache hit", async () => {
     const target = join(tempDir, "agentscan");
+    const telemetry: TelemetryInput[] = [];
     await mkdir(target);
     await storeCorrection({
       query: "ascan",
@@ -66,11 +68,24 @@ describe("main direct query mode", () => {
       now: new Date("2026-05-18T00:00:00.000Z"),
     });
 
-    expect(await main(["ascan"])).toEqual({ code: 0 });
+    expect(await main(["ascan"], testDeps({ appendTelemetryEvent: async (event) => telemetry.push(event) }))).toEqual({ code: 0 });
 
     expect(stdout).toEqual([target]);
     expect(stderr).toEqual([]);
     expect((await readCorrectionCache()).ascan?.hits).toBe(1);
+    expect(telemetry).toEqual([
+      {
+        kind: "direct-query",
+        outcome: "cache-hit",
+        durationMs: expect.any(Number),
+        data: {
+          query: "ascan",
+          cache_status: "hit",
+          selected_path: target,
+          cached: true,
+        },
+      },
+    ]);
   });
 
   test("joins multi-word direct query arguments for exact cache lookup", async () => {
@@ -91,11 +106,15 @@ describe("main direct query mode", () => {
   test("uses model selection on direct query cache miss", async () => {
     const selected = join(tempDir, "agentscan");
     const other = join(tempDir, "other");
+    const telemetry: TelemetryInput[] = [];
     await mkdir(selected);
 
     expect(
       await main(["ascan"], {
-        ...testDeps({ lookup: { status: "miss", query: "ascan" } }),
+        ...testDeps({
+          lookup: { status: "miss", query: "ascan" },
+          appendTelemetryEvent: async (event) => telemetry.push(event),
+        }),
         loadZoxideEntries: async () => [
           { path: selected, score: 10, rank: 1 },
           { path: other, score: 9, rank: 2 },
@@ -115,6 +134,20 @@ describe("main direct query mode", () => {
 
     expect(stdout).toEqual([selected]);
     expect(stderr).toEqual([]);
+    expect(telemetry).toEqual([
+      {
+        kind: "direct-query",
+        outcome: "selected",
+        durationMs: expect.any(Number),
+        data: {
+          query: "ascan",
+          cache_status: "miss",
+          selected_path: selected,
+          confidence: 0.8,
+          cached: true,
+        },
+      },
+    ]);
   });
 
   test("falls back to model selection after stale direct query cache entry", async () => {
@@ -171,11 +204,15 @@ describe("main direct query mode", () => {
 
   test("does not store low-confidence model fallback selection", async () => {
     const selected = join(tempDir, "agentscan");
+    const telemetry: TelemetryInput[] = [];
     await mkdir(selected);
 
     expect(
       await main(["ascan"], {
-        ...testDeps({ lookup: { status: "miss", query: "ascan" } }),
+        ...testDeps({
+          lookup: { status: "miss", query: "ascan" },
+          appendTelemetryEvent: async (event) => telemetry.push(event),
+        }),
         loadZoxideEntries: async () => [{ path: selected, score: 10, rank: 1 }],
         selectCandidate: async ({ candidates }) => selectionResult(candidates[0] ?? null, "selected", 0.74),
       }),
@@ -184,6 +221,20 @@ describe("main direct query mode", () => {
     expect(stdout).toEqual([selected]);
     expect(stderr).toEqual([]);
     expect(await readCorrectionCache()).toEqual({});
+    expect(telemetry).toEqual([
+      {
+        kind: "direct-query",
+        outcome: "selected",
+        durationMs: expect.any(Number),
+        data: {
+          query: "ascan",
+          cache_status: "miss",
+          selected_path: selected,
+          confidence: 0.74,
+          cached: false,
+        },
+      },
+    ]);
   });
 
   test("keeps navigation successful when storing correction fails", async () => {
@@ -207,9 +258,14 @@ describe("main direct query mode", () => {
   });
 
   test("fails clearly when model fallback selects no candidate", async () => {
+    const telemetry: TelemetryInput[] = [];
+
     expect(
       await main(["ascan"], {
-        ...testDeps({ lookup: { status: "miss", query: "ascan" } }),
+        ...testDeps({
+          lookup: { status: "miss", query: "ascan" },
+          appendTelemetryEvent: async (event) => telemetry.push(event),
+        }),
         loadZoxideEntries: async () => [{ path: join(tempDir, "agentscan"), score: 10, rank: 1 }],
         selectCandidate: async () => selectionResult(null, "no good match"),
       }),
@@ -217,6 +273,42 @@ describe("main direct query mode", () => {
 
     expect(stdout).toEqual([]);
     expect(stderr).toEqual(["zdr: no good match"]);
+    expect(telemetry).toEqual([
+      {
+        kind: "direct-query",
+        outcome: "no-selection",
+        durationMs: expect.any(Number),
+        data: {
+          query: "ascan",
+          cache_status: "miss",
+          confidence: 0,
+        },
+      },
+    ]);
+  });
+
+  test("keeps navigation successful when direct query telemetry fails", async () => {
+    const target = join(tempDir, "agentscan");
+    await mkdir(target);
+    await storeCorrection({
+      query: "ascan",
+      path: target,
+      now: new Date("2026-05-18T00:00:00.000Z"),
+    });
+
+    expect(
+      await main(
+        ["ascan"],
+        testDeps({
+          appendTelemetryEvent: async () => {
+            throw new Error("telemetry is read-only");
+          },
+        }),
+      ),
+    ).toEqual({ code: 0 });
+
+    expect(stdout).toEqual([target]);
+    expect(stderr).toEqual([]);
   });
 });
 
@@ -573,7 +665,14 @@ describe("main recovery routing", () => {
   });
 });
 
-function testDeps(input: { lookup?: CorrectionLookup; storeCorrection?: StoreCorrection; runPicker?: RunPicker } = {}) {
+function testDeps(
+  input: {
+    lookup?: CorrectionLookup;
+    storeCorrection?: StoreCorrection;
+    runPicker?: RunPicker;
+    appendTelemetryEvent?: AppendTelemetryEvent;
+  } = {},
+) {
   return {
     lookupCorrection: input.lookup ? async () => input.lookup as CorrectionLookup : readCorrectionFromCache,
     inspectCorrection,
@@ -589,6 +688,7 @@ function testDeps(input: { lookup?: CorrectionLookup; storeCorrection?: StoreCor
       : async () => {
           throw new Error("unexpected picker");
         },
+    appendTelemetryEvent: input.appendTelemetryEvent ?? (async () => {}),
     cwd: () => tempDir,
     now: () => new Date("2026-05-18T00:00:00.000Z"),
   };
@@ -625,6 +725,7 @@ async function readCorrectionFromCache(query: string): Promise<CorrectionLookup>
 
 type StoreCorrection = (input: { query: string; path: string; now?: Date }) => Promise<CorrectionEntry>;
 type RunPicker = (input: PickerInput) => Promise<PickerResult>;
+type AppendTelemetryEvent = (input: TelemetryInput) => Promise<unknown>;
 
 function selectionResult(candidate: Candidate | null, reason = "selected", confidence = candidate ? 0.8 : 0) {
   return {

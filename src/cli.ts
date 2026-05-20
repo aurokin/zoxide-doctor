@@ -25,6 +25,7 @@ import {
 import { loadZoxideEntries, type ZoxideEntry } from "./zoxide.js";
 import type { PickerInput, PickerResult } from "./picker.js";
 import type { SelectionResult } from "./provider/select.js";
+import { appendTelemetryEvent, type TelemetryInput } from "./telemetry.js";
 
 type CommandResult = {
   code: number;
@@ -43,6 +44,7 @@ type CliDeps = {
   loadZoxideEntries: () => Promise<ZoxideEntry[]>;
   selectCandidate: SelectCandidate;
   runPicker: (input: PickerInput) => Promise<PickerResult>;
+  appendTelemetryEvent: (input: TelemetryInput) => Promise<unknown>;
   cwd: () => string;
   now: () => Date;
 };
@@ -112,6 +114,7 @@ const defaultDeps: CliDeps = {
     const { runPicker } = await import("./picker.js");
     return runPicker(input);
   },
+  appendTelemetryEvent,
   cwd: () => process.cwd(),
   now: () => new Date(),
 };
@@ -572,27 +575,98 @@ async function directQueryCommand(queryArgv: string[], deps: CliDeps): Promise<C
     return { code: 2 };
   }
 
+  const start = performance.now();
+  let cacheStatus: CorrectionLookup["status"] | null = null;
   try {
     const lookup = await deps.lookupCorrection(query);
+    cacheStatus = lookup.status;
     if (lookup.status === "hit") {
+      await recordDirectQueryTelemetry(deps, {
+        query,
+        start,
+        outcome: "cache-hit",
+        cacheStatus,
+        selectedPath: lookup.entry.path,
+        cached: true,
+      });
       console.log(lookup.entry.path);
       return { code: 0 };
     }
     const result = await runDirectQuerySelection(queryArgv, deps);
     if (!result.candidate) {
+      await recordDirectQueryTelemetry(deps, {
+        query,
+        start,
+        outcome: "no-selection",
+        cacheStatus,
+        confidence: result.selection.confidence,
+        usage: result.usage,
+      });
       console.error(result.selection.reason ? `zdr: ${result.selection.reason}` : "zdr: no candidate selected");
       return { code: 1 };
     }
-    await maybeStoreDirectQueryCorrection({
+    const cached = await maybeStoreDirectQueryCorrection({
       query,
       result,
       deps,
     });
+    await recordDirectQueryTelemetry(deps, {
+      query,
+      start,
+      outcome: "selected",
+      cacheStatus,
+      selectedPath: result.candidate.path,
+      confidence: result.selection.confidence,
+      cached,
+      usage: result.usage,
+    });
     console.log(result.candidate.path);
     return { code: 0 };
   } catch (error) {
+    await recordDirectQueryTelemetry(deps, {
+      query,
+      start,
+      outcome: "error",
+      cacheStatus,
+      error: error instanceof Error ? error.message : String(error),
+    });
     console.error(`zdr: ${error instanceof Error ? error.message : String(error)}`);
     return { code: 1 };
+  }
+}
+
+async function recordDirectQueryTelemetry(
+  deps: CliDeps,
+  input: {
+    query: string;
+    start: number;
+    outcome: string;
+    cacheStatus: CorrectionLookup["status"] | null;
+    selectedPath?: string;
+    confidence?: number;
+    cached?: boolean;
+    usage?: unknown;
+    error?: string;
+  },
+): Promise<void> {
+  const data: Record<string, unknown> = {
+    query: input.query,
+    cache_status: input.cacheStatus,
+    ...(input.selectedPath === undefined ? {} : { selected_path: input.selectedPath }),
+    ...(input.confidence === undefined ? {} : { confidence: input.confidence }),
+    ...(input.cached === undefined ? {} : { cached: input.cached }),
+    ...(input.usage === undefined || input.usage === null ? {} : { usage: input.usage }),
+    ...(input.error === undefined ? {} : { error: input.error }),
+  };
+  try {
+    await deps.appendTelemetryEvent({
+      kind: "direct-query",
+      outcome: input.outcome,
+      durationMs: elapsedMs(input.start),
+      data,
+    });
+  } catch {
+    // Telemetry must never break navigation.
   }
 }
 
@@ -614,9 +688,9 @@ async function maybeStoreDirectQueryCorrection(input: {
   query: string;
   result: SelectionResult;
   deps: CliDeps;
-}): Promise<void> {
+}): Promise<boolean> {
   if (!input.result.candidate || input.result.selection.confidence < DIRECT_QUERY_CACHE_CONFIDENCE) {
-    return;
+    return false;
   }
   try {
     await input.deps.storeCorrection({
@@ -624,8 +698,10 @@ async function maybeStoreDirectQueryCorrection(input: {
       path: input.result.candidate.path,
       now: input.deps.now(),
     });
+    return true;
   } catch (error) {
     console.error(`zdr: warning: failed to store correction: ${error instanceof Error ? error.message : String(error)}`);
+    return false;
   }
 }
 

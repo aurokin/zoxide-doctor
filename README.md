@@ -120,6 +120,14 @@ zdr debug-timing ascan --budget-ms 150
 
 `debug-timing` prints JSON for local paths such as version metadata, correction-cache reads, exact-query cache lookup when a query is supplied, and no-arg recovery context gathering before any provider call. `--budget-ms` adds budget metadata to the JSON without changing the command's exit status.
 
+Local telemetry:
+
+```text
+~/.local/state/zdr/events.jsonl
+```
+
+Telemetry is local-only. Direct-query mode records JSONL events for cache hits, model selections, no-selections, and errors. Set `ZDR_TELEMETRY=0` to disable event writes.
+
 ## Limits
 
 - zsh is the only supported shell integration right now.
