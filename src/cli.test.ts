@@ -151,6 +151,71 @@ describe("main direct query mode", () => {
     ]);
   });
 
+  test("passes configured provider and privacy settings to direct query selection", async () => {
+    const selected = join(tempDir, "agentscan");
+    await mkdir(selected);
+    const config: LoadedConfig = {
+      path: join(tempDir, "config.json"),
+      source: "file",
+      config: {
+        schema_version: 1,
+        provider: {
+          name: "openrouter",
+          model: "anthropic/claude-sonnet-4.5",
+        },
+        privacy: {
+          redact_home: false,
+          redact_emails: true,
+          redact_secrets: true,
+          redact_tokens: true,
+        },
+        telemetry: {
+          enabled: true,
+          max_events: 1000,
+        },
+      },
+    };
+
+    expect(
+      await main(["ascan"], {
+        ...testDeps({
+          lookup: { status: "miss", query: "ascan" },
+          loadConfig: async () => config,
+        }),
+        loadZoxideEntries: async () => [{ path: selected, score: 10, rank: 1 }],
+        selectCandidate: async ({ candidates, provider, privacy }) => {
+          expect(provider).toEqual(config.config.provider);
+          expect(privacy).toEqual(config.config.privacy);
+          return selectionResult(candidates[0] ?? null);
+        },
+      }),
+    ).toEqual({ code: 0 });
+  });
+
+  test("does not record direct query telemetry when config disables telemetry", async () => {
+    const target = join(tempDir, "agentscan");
+    const telemetry: TelemetryInput[] = [];
+    await mkdir(target);
+    await storeCorrection({
+      query: "ascan",
+      path: target,
+      now: new Date("2026-05-18T00:00:00.000Z"),
+    });
+
+    expect(
+      await main(
+        ["ascan"],
+        testDeps({
+          appendTelemetryEvent: async (event) => telemetry.push(event),
+          loadConfig: async () => defaultLoadedConfig({ telemetry: { enabled: false, max_events: 1000 } }),
+        }),
+      ),
+    ).toEqual({ code: 0 });
+
+    expect(stdout).toEqual([target]);
+    expect(telemetry).toEqual([]);
+  });
+
   test("falls back to model selection after stale direct query cache entry", async () => {
     const stalePath = join(tempDir, "missing");
     const selected = join(tempDir, "agentscan");
@@ -569,11 +634,28 @@ describe("main telemetry commands", () => {
     expect(maxEvents).toBe(0);
   });
 
-  test("requires a telemetry prune limit", async () => {
-    expect(await main(["prune-events"], testDeps())).toEqual({ code: 2 });
+  test("uses configured telemetry prune limit when omitted", async () => {
+    let maxEvents: number | undefined;
 
-    expect(stdout).toEqual([]);
-    expect(stderr).toEqual(["zdr: prune-events requires --max-events <count>"]);
+    expect(
+      await main(
+        ["prune-events"],
+        testDeps({
+          loadConfig: async () => defaultLoadedConfig({ telemetry: { enabled: true, max_events: 17 } }),
+          pruneTelemetryEvents: async (input) => {
+            maxEvents = input.maxEvents;
+            return {
+              kept: 17,
+              pruned: 2,
+              dropped_invalid: 0,
+            };
+          },
+        }),
+      ),
+    ).toEqual({ code: 0 });
+
+    expect(maxEvents).toBe(17);
+    expect(stderr).toEqual([]);
   });
 
   test("rejects invalid telemetry prune limit", async () => {
@@ -821,8 +903,20 @@ describe("main recovery routing", () => {
       await main([], {
         ...testDeps({ appendTelemetryEvent: async (event) => telemetry.push(event) }),
         loadZoxideEntries: async () => [{ path: selected, score: 10, rank: 1 }],
-        selectCandidate: async ({ rejectedPaths, candidates }) => {
+        loadConfig: async () =>
+          defaultLoadedConfig({
+            provider: { name: "openrouter", model: "anthropic/claude-sonnet-4.5" },
+            privacy: {
+              redact_home: false,
+              redact_emails: true,
+              redact_secrets: true,
+              redact_tokens: true,
+            },
+          }),
+        selectCandidate: async ({ rejectedPaths, candidates, provider, privacy }) => {
           expect(rejectedPaths).toEqual([]);
+          expect(provider).toEqual({ name: "openrouter", model: "anthropic/claude-sonnet-4.5" });
+          expect(privacy?.redact_home).toBe(false);
           return selectionResult(candidates[0] ?? null);
         },
       }),
@@ -1118,31 +1212,49 @@ function testDeps(
         pruned: 0,
         dropped_invalid: 0,
       })),
-    loadConfig:
-      input.loadConfig ??
-      (async () => ({
-        path: join(tempDir, "config.json"),
-        source: "default",
-        config: {
-          schema_version: 1,
-          provider: {
-            name: "openrouter",
-            model: "deepseek/deepseek-v4-flash",
-          },
-          privacy: {
-            redact_home: true,
-            redact_emails: true,
-            redact_secrets: true,
-            redact_tokens: true,
-          },
-          telemetry: {
-            enabled: true,
-            max_events: 1000,
-          },
-        },
-      })),
+    loadConfig: input.loadConfig ?? (async () => defaultLoadedConfig()),
     cwd: () => tempDir,
     now: () => new Date("2026-05-18T00:00:00.000Z"),
+  };
+}
+
+function defaultLoadedConfig(overrides: Partial<LoadedConfig["config"]> = {}): LoadedConfig {
+  const base: LoadedConfig["config"] = {
+    schema_version: 1,
+    provider: {
+      name: "openrouter",
+      model: "deepseek/deepseek-v4-flash",
+    },
+    privacy: {
+      redact_home: true,
+      redact_emails: true,
+      redact_secrets: true,
+      redact_tokens: true,
+    },
+    telemetry: {
+      enabled: true,
+      max_events: 1000,
+    },
+  };
+  return {
+    path: join(tempDir, "config.json"),
+    source: "default",
+    config: {
+      ...base,
+      ...overrides,
+      provider: {
+        ...base.provider,
+        ...overrides.provider,
+      },
+      privacy: {
+        ...base.privacy,
+        ...overrides.privacy,
+      },
+      telemetry: {
+        ...base.telemetry,
+        ...overrides.telemetry,
+      },
+    },
   };
 }
 

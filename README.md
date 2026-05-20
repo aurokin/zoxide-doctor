@@ -39,7 +39,6 @@ Implemented:
 Not implemented yet:
 
 - shell support beyond zsh.
-- config values are readable with `zdr debug-config`, but provider/runtime commands still use the built-in defaults until config wiring is complete.
 
 ## Install
 
@@ -140,7 +139,7 @@ Current v1 config shape:
 }
 ```
 
-`zdr debug-config` prints the merged config and reports whether values came from defaults or a file.
+`zdr debug-config` prints the merged config and reports whether values came from defaults or a file. Provider-backed selection, `provider-smoke`, and provider timing diagnostics use `provider.name` and `provider.model`. Prompt construction uses the privacy redaction settings before sending context to the provider. Telemetry event writes honor `telemetry.enabled`, and `zdr prune-events` uses `telemetry.max_events` when no explicit limit is supplied.
 
 Local timing diagnostics:
 
@@ -167,6 +166,7 @@ Inspect local telemetry:
 ```bash
 zdr debug-events
 zdr debug-events --limit 20
+zdr prune-events
 zdr prune-events --max-events 1000
 ```
 

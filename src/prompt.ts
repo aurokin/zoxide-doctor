@@ -1,4 +1,5 @@
 import type { Candidate } from "./candidates.js";
+import { DEFAULT_CONFIG, type ZdrConfig } from "./config.js";
 import type { FinishedZState } from "./shell-state.js";
 
 export type SelectionResponse = {
@@ -11,12 +12,14 @@ export function buildSelectionPrompt(input: {
   state: FinishedZState;
   candidates: Candidate[];
   rejectedPaths?: string[];
+  privacy?: ZdrConfig["privacy"];
 }): { systemPrompt: string; userMessage: string } {
   const query = input.state.query_argv.join(" ").trim();
+  const privacy = input.privacy ?? DEFAULT_CONFIG.privacy;
   const candidateBlock = input.candidates
     .map((candidate) => {
       const flags = candidate.wrong_landing_candidate ? " wrong_landing_candidate=true" : "";
-      return `${candidate.id}. ${sanitizeForPrompt(candidate.display_path)}${flags}`;
+      return `${candidate.id}. ${sanitizeForPrompt(redactPath(candidate.path, privacy), privacy)}${flags}`;
     })
     .join("\n");
 
@@ -35,10 +38,10 @@ export function buildSelectionPrompt(input: {
       candidateBlock,
       "",
       "=== Volatile tail ===",
-      `Query: ${sanitizeForPrompt(query)}`,
-      `Before pwd: ${sanitizeForPrompt(redactPath(input.state.before_pwd))}`,
-      `Landed pwd: ${sanitizeForPrompt(redactPath(input.state.after_pwd))}`,
-      `Already tried wrong: ${formatRejectedPaths(input.rejectedPaths ?? [])}`,
+      `Query: ${sanitizeForPrompt(query, privacy)}`,
+      `Before pwd: ${sanitizeForPrompt(redactPath(input.state.before_pwd, privacy), privacy)}`,
+      `Landed pwd: ${sanitizeForPrompt(redactPath(input.state.after_pwd, privacy), privacy)}`,
+      `Already tried wrong: ${formatRejectedPaths(input.rejectedPaths ?? [], privacy)}`,
       `Zoxide exit status: ${input.state.exit_status}`,
     ].join("\n"),
   };
@@ -83,7 +86,10 @@ function isSelectionResponse(value: unknown): value is SelectionResponse {
   );
 }
 
-function redactPath(path: string): string {
+function redactPath(path: string, privacy: ZdrConfig["privacy"]): string {
+  if (!privacy.redact_home) {
+    return path;
+  }
   const home = process.env.HOME;
   if (home && path === home) {
     return "~";
@@ -94,17 +100,25 @@ function redactPath(path: string): string {
   return path.replace(/^\/Users\/[^/]+/, "~").replace(/^\/home\/[^/]+/, "~");
 }
 
-function sanitizeForPrompt(value: string): string {
-  return value
-    .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, "[redacted-email]")
-    .replace(/\b(?:sk|ghp|github_pat|glpat|xox[baprs]?)-[A-Za-z0-9_-]{12,}\b/gi, "[redacted-secret]")
-    .replace(/\b[a-f0-9]{32,}\b/gi, "[redacted-token]")
-    .replace(/\b(?=[A-Za-z0-9_-]{24,}\b)(?=.*[A-Za-z])(?=.*\d)[A-Za-z0-9_-]+\b/g, "[redacted-token]");
+function sanitizeForPrompt(value: string, privacy: ZdrConfig["privacy"]): string {
+  let sanitized = value;
+  if (privacy.redact_emails) {
+    sanitized = sanitized.replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, "[redacted-email]");
+  }
+  if (privacy.redact_secrets) {
+    sanitized = sanitized.replace(/\b(?:sk|ghp|github_pat|glpat|xox[baprs]?)-[A-Za-z0-9_-]{12,}\b/gi, "[redacted-secret]");
+  }
+  if (privacy.redact_tokens) {
+    sanitized = sanitized
+      .replace(/\b[a-f0-9]{32,}\b/gi, "[redacted-token]")
+      .replace(/\b(?=[A-Za-z0-9_-]{24,}\b)(?=.*[A-Za-z])(?=.*\d)[A-Za-z0-9_-]+\b/g, "[redacted-token]");
+  }
+  return sanitized;
 }
 
-function formatRejectedPaths(paths: string[]): string {
+function formatRejectedPaths(paths: string[], privacy: ZdrConfig["privacy"]): string {
   if (paths.length === 0) {
     return "none";
   }
-  return paths.map((path) => sanitizeForPrompt(redactPath(path))).join(", ");
+  return paths.map((path) => sanitizeForPrompt(redactPath(path, privacy), privacy)).join(", ");
 }

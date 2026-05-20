@@ -1,6 +1,8 @@
 import type { Candidate } from "../candidates.js";
+import { DEFAULT_CONFIG, type ZdrConfig } from "../config.js";
 import { buildSelectionPrompt, parseSelectionResponse, type SelectionResponse } from "../prompt.js";
 import type { FinishedZState } from "../shell-state.js";
+import { resolveConfiguredModel } from "./model.js";
 
 export type SelectionResult = {
   selection: SelectionResponse;
@@ -13,11 +15,14 @@ export async function selectCandidate(input: {
   state: FinishedZState;
   candidates: Candidate[];
   rejectedPaths?: string[];
+  provider?: ZdrConfig["provider"];
+  privacy?: ZdrConfig["privacy"];
 }): Promise<SelectionResult> {
-  const { completeSimple, getModel } = await import("@earendil-works/pi-ai");
-  const model = getModel("openrouter", "deepseek/deepseek-v4-flash");
+  const { completeSimple } = await import("@earendil-works/pi-ai");
+  const provider = input.provider ?? DEFAULT_CONFIG.provider;
+  const model = await resolveConfiguredModel(provider);
   if (!model) {
-    throw new Error("Pi did not return the configured OpenRouter model");
+    throw new Error(`Pi did not return configured ${provider.name} model ${provider.model}`);
   }
 
   const prompt = buildSelectionPrompt(input);

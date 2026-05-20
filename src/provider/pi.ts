@@ -1,13 +1,18 @@
+import { DEFAULT_CONFIG, type ZdrConfig } from "../config.js";
+import { resolveConfiguredModel } from "./model.js";
+
 type SmokeOptions = {
   live: boolean;
+  provider?: ZdrConfig["provider"];
 };
 
 export async function smokePiOpenRouter(options: SmokeOptions): Promise<{ code: number }> {
-  const { completeSimple, getModel } = await import("@earendil-works/pi-ai");
+  const { completeSimple } = await import("@earendil-works/pi-ai");
+  const provider = options.provider ?? DEFAULT_CONFIG.provider;
 
-  const model = getModel("openrouter", "deepseek/deepseek-v4-flash");
+  const model = await resolveConfiguredModel(provider);
   if (!model) {
-    console.error("zdr: Pi did not return the configured OpenRouter model");
+    console.error(`zdr: Pi did not return configured ${provider.name} model ${provider.model}`);
     return { code: 1 };
   }
 
@@ -18,7 +23,7 @@ export async function smokePiOpenRouter(options: SmokeOptions): Promise<{ code: 
   };
 
   if (options.live) {
-    if (!process.env.OPENROUTER_API_KEY) {
+    if (provider.name === "openrouter" && !process.env.OPENROUTER_API_KEY) {
       console.error("zdr: OPENROUTER_API_KEY is required for provider-smoke --live");
       return { code: 2 };
     }

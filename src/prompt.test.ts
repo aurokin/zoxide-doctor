@@ -47,6 +47,26 @@ describe("buildSelectionPrompt", () => {
     expect(prompt.userMessage).not.toContain("sk-test_1234567890abcdef");
     expect(prompt.userMessage).not.toContain("abcdefabcdefabcdefabcdefabcdefab");
   });
+
+  test("honors privacy redaction settings", () => {
+    const prompt = buildSelectionPrompt({
+      state,
+      candidates,
+      privacy: {
+        redact_home: false,
+        redact_emails: false,
+        redact_secrets: true,
+        redact_tokens: true,
+      },
+    });
+
+    expect(prompt.userMessage).toContain("/Users/auro/code");
+    expect(prompt.userMessage).toContain("john@example.com");
+    expect(prompt.userMessage).toContain("/Users/auro/code/secret");
+    expect(prompt.userMessage).toContain("[redacted-secret]");
+    expect(prompt.userMessage).toContain("[redacted-token]");
+    expect(prompt.userMessage).not.toContain("sk-test_1234567890abcdef");
+  });
 });
 
 describe("parseSelectionResponse", () => {

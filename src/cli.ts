@@ -3,7 +3,7 @@
 import packageJson from "../package.json" with { type: "json" };
 import { dirname, parse } from "node:path";
 import { buildCandidates, type Candidate } from "./candidates.js";
-import { loadConfig, type LoadedConfig } from "./config.js";
+import { loadConfig, type LoadedConfig, type ZdrConfig } from "./config.js";
 import {
   forgetCorrection,
   inspectCorrection,
@@ -44,6 +44,8 @@ type SelectCandidate = (input: {
   state: FinishedZState;
   candidates: Candidate[];
   rejectedPaths?: string[];
+  provider?: ZdrConfig["provider"];
+  privacy?: ZdrConfig["privacy"];
 }) => Promise<SelectionResult>;
 
 type CliDeps = {
@@ -95,7 +97,7 @@ export async function main(argv: string[], deps: CliDeps = defaultDeps): Promise
     case "debug-candidates":
       return debugCandidatesCommand(args);
     case "debug-select":
-      return debugSelectCommand(args);
+      return debugSelectCommand(args, deps);
     case "debug-corrections":
       return debugCorrectionsCommand();
     case "debug-config":
@@ -111,7 +113,7 @@ export async function main(argv: string[], deps: CliDeps = defaultDeps): Promise
     case "forget":
       return forgetCommand(args);
     case "provider-smoke":
-      return providerSmokeCommand(args);
+      return providerSmokeCommand(args, deps);
     default:
       if (command.startsWith("-")) {
         console.error(`zdr: unknown option: ${command}`);
@@ -245,7 +247,7 @@ async function debugCandidatesCommand(args: string[]): Promise<CommandResult> {
   }
 }
 
-async function debugSelectCommand(args: string[]): Promise<CommandResult> {
+async function debugSelectCommand(args: string[], deps: CliDeps): Promise<CommandResult> {
   const limit = parseLimit(args);
   if (!limit.ok) {
     console.error(`zdr: ${limit.error}`);
@@ -253,7 +255,7 @@ async function debugSelectCommand(args: string[]): Promise<CommandResult> {
   }
 
   try {
-    const { state, result, rejectedPaths } = await runDebugSelection(limit.value);
+    const { state, result, rejectedPaths } = await runDebugSelection(limit.value, deps);
     console.log(
       JSON.stringify(
         {
@@ -359,7 +361,8 @@ async function pruneEventsCommand(args: string[], deps: CliDeps): Promise<Comman
   }
 
   try {
-    console.log(JSON.stringify(await deps.pruneTelemetryEvents({ maxEvents: parsed.maxEvents }), null, 2));
+    const maxEvents = parsed.maxEvents ?? (await deps.loadConfig()).config.telemetry.max_events;
+    console.log(JSON.stringify(await deps.pruneTelemetryEvents({ maxEvents }), null, 2));
     return { code: 0 };
   } catch (error) {
     console.error(`zdr: ${error instanceof Error ? error.message : String(error)}`);
@@ -367,7 +370,7 @@ async function pruneEventsCommand(args: string[], deps: CliDeps): Promise<Comman
   }
 }
 
-type PruneEventsArgs = { ok: true; maxEvents: number } | { ok: false; error: string };
+type PruneEventsArgs = { ok: true; maxEvents?: number } | { ok: false; error: string };
 
 function parsePruneEventsArgs(args: string[]): PruneEventsArgs {
   let maxEvents: number | undefined;
@@ -405,10 +408,7 @@ function parsePruneEventsArgs(args: string[]): PruneEventsArgs {
     return { ok: false, error: `unknown prune-events argument: ${arg}` };
   }
 
-  if (maxEvents === undefined) {
-    return { ok: false, error: "prune-events requires --max-events <count>" };
-  }
-  return { ok: true, maxEvents };
+  return maxEvents === undefined ? { ok: true } : { ok: true, maxEvents };
 }
 
 async function forgetCommand(args: string[]): Promise<CommandResult> {
@@ -530,10 +530,13 @@ async function debugProviderTimingCommand(args: string[], deps: CliDeps): Promis
   if (selectionState && candidates.length > 0) {
     measurements.push(
       await measureStep("provider-selection", async () => {
+        const config = (await deps.loadConfig()).config;
         const result = await deps.selectCandidate({
           state: selectionState,
           candidates,
           rejectedPaths,
+          provider: config.provider,
+          privacy: config.privacy,
         });
         const providerUsage = summarizeProviderUsage(result.usage);
         return {
@@ -860,6 +863,9 @@ async function recordRecoveryTelemetry(
     ...(input.error === undefined ? {} : { error: input.error }),
   };
   try {
+    if (!(await telemetryEnabledFromConfig(deps))) {
+      return;
+    }
     await deps.appendTelemetryEvent({
       kind: "recovery",
       outcome: input.outcome,
@@ -1023,6 +1029,9 @@ async function recordDirectQueryTelemetry(
     ...(input.error === undefined ? {} : { error: input.error }),
   };
   try {
+    if (!(await telemetryEnabledFromConfig(deps))) {
+      return;
+    }
     await deps.appendTelemetryEvent({
       kind: "direct-query",
       outcome: input.outcome,
@@ -1045,7 +1054,8 @@ async function runDirectQuerySelection(queryArgv: string[], deps: CliDeps): Prom
   if (candidates.length === 0) {
     throw new Error("no zoxide candidates found");
   }
-  return deps.selectCandidate({ state, candidates });
+  const config = (await deps.loadConfig()).config;
+  return deps.selectCandidate({ state, candidates, provider: config.provider, privacy: config.privacy });
 }
 
 async function maybeStoreDirectQueryCorrection(input: {
@@ -1103,11 +1113,18 @@ async function runSelection(
     limit,
     rejectedPaths,
   });
-  const result = await deps.selectCandidate({ state, candidates, rejectedPaths });
+  const config = (await deps.loadConfig()).config;
+  const result = await deps.selectCandidate({
+    state,
+    candidates,
+    rejectedPaths,
+    provider: config.provider,
+    privacy: config.privacy,
+  });
   return { candidates, result, rejectedPaths };
 }
 
-async function runDebugSelection(limit: number) {
+async function runDebugSelection(limit: number, deps: CliDeps) {
   const state = await readLastZState();
   if (!state) {
     throw new Error("no recorded z attempt found");
@@ -1122,14 +1139,34 @@ async function runDebugSelection(limit: number) {
     limit,
     rejectedPaths,
   });
-  const { selectCandidate } = await import("./provider/select.js");
-  const result = await selectCandidate({ state, candidates, rejectedPaths });
+  const config = (await deps.loadConfig()).config;
+  const result = await deps.selectCandidate({
+    state,
+    candidates,
+    rejectedPaths,
+    provider: config.provider,
+    privacy: config.privacy,
+  });
   return { state, candidates, result, retry, rejectedPaths };
 }
 
-async function providerSmokeCommand(args: string[]): Promise<CommandResult> {
+async function providerSmokeCommand(args: string[], deps: CliDeps): Promise<CommandResult> {
   const { smokePiOpenRouter } = await import("./provider/pi.js");
-  return smokePiOpenRouter({ live: args.includes("--live") });
+  try {
+    const config = (await deps.loadConfig()).config;
+    return smokePiOpenRouter({ live: args.includes("--live"), provider: config.provider });
+  } catch (error) {
+    console.error(`zdr: ${error instanceof Error ? error.message : String(error)}`);
+    return { code: 1 };
+  }
+}
+
+async function telemetryEnabledFromConfig(deps: CliDeps): Promise<boolean> {
+  try {
+    return (await deps.loadConfig()).config.telemetry.enabled;
+  } catch {
+    return true;
+  }
 }
 
 function printHelp(): void {
@@ -1158,12 +1195,12 @@ Usage:
                       Include local timing budget status in JSON
   zdr debug-provider-timing [query]
                       Measure live provider selection timing as JSON
-  zdr prune-events --max-events <count>
+  zdr prune-events [--max-events <count>]
                       Keep only the newest local telemetry events
   zdr forget <query> Remove one exact direct-query correction
-  zdr provider-smoke  Verify Pi/OpenRouter import and model lookup
+  zdr provider-smoke  Verify Pi provider/model lookup
   zdr provider-smoke --live
-                      Make a tiny live OpenRouter completion
+                      Make a tiny live provider completion
   zdr --version       Print version
 `);
 }
