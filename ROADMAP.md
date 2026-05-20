@@ -2,7 +2,7 @@
 
 ## Current Status
 
-Status: v0.3 implemented; v0.4 is next.
+Status: v0.4 implementation in progress.
 
 The project currently has the v0.1 core recovery loop plus v0.2 direct-query correction memory in place. The core decisions are locked:
 
@@ -129,7 +129,7 @@ Exit criteria:
 
 ## Near-Term Implementation Tasks
 
-1. Add local JSONL telemetry for recovery, direct-query, cache, picker, and provider outcomes.
+1. Wire local JSONL telemetry into recovery, direct-query, cache, picker, and provider outcomes.
 2. Add a way to inspect or disable local telemetry.
 3. Capture provider usage/cost/cache fields when Pi exposes them.
 4. Measure and document provider-backed recovery latency separately from local timing.
