@@ -62,9 +62,7 @@ export async function selectCandidate(input: {
   try {
     selection = parseSelectionResponse(rawText, input.candidates);
   } catch (error) {
-    throw new Error(
-      `${error instanceof Error ? error.message : String(error)}; raw content: ${JSON.stringify(response.content)}`,
-    );
+    throw new Error(`${error instanceof Error ? error.message : String(error)}; ${providerResponseSummary(rawText)}`);
   }
   return {
     selection,
@@ -74,4 +72,30 @@ export async function selectCandidate(input: {
     raw_text: rawText,
     usage: response.usage,
   };
+}
+
+function providerResponseSummary(rawText: string): string {
+  const preview = redactProviderText(rawText);
+  return `provider returned ${rawText.length} text chars; preview: ${truncateProviderPreview(preview)}`;
+}
+
+function redactProviderText(value: string): string {
+  return value
+    .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, "[redacted-email]")
+    .replace(/\b(?:sk|ghp|github_pat|glpat|xox[baprs]?)-[A-Za-z0-9_-]{12,}\b/gi, "[redacted-secret]")
+    .replace(/\b[a-f0-9]{32,}\b/gi, "[redacted-token]")
+    .replace(/\b(?=[A-Za-z0-9_-]{24,}\b)(?=.*[A-Za-z])(?=.*\d)[A-Za-z0-9_-]+\b/g, "[redacted-token]");
+}
+
+function truncateProviderPreview(value: string): string {
+  const maxLength = 160;
+  if (value.length <= maxLength) {
+    return value;
+  }
+  const truncated = value.slice(0, maxLength);
+  const markerStart = truncated.lastIndexOf("[redacted-");
+  if (markerStart !== -1 && !truncated.slice(markerStart).includes("]")) {
+    return truncated.slice(0, markerStart);
+  }
+  return truncated;
 }

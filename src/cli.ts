@@ -31,6 +31,7 @@ import {
   appendTelemetryEvent,
   pruneTelemetryEvents,
   readTelemetryEvents,
+  telemetryEnabled,
   type TelemetryEvent,
   type TelemetryInput,
   type TelemetryPruneResult,
@@ -1169,10 +1170,14 @@ async function providerSmokeCommand(args: string[], deps: CliDeps): Promise<Comm
 }
 
 async function telemetryEnabledFromConfig(deps: CliDeps): Promise<boolean> {
+  const envValue = process.env.ZDR_TELEMETRY;
+  if (envValue && envValue.length > 0) {
+    return telemetryEnabled(process.env);
+  }
   try {
     return (await deps.loadConfig()).config.telemetry.enabled;
   } catch {
-    return true;
+    return false;
   }
 }
 

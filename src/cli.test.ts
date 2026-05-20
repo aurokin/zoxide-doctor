@@ -216,6 +216,40 @@ describe("main direct query mode", () => {
     expect(telemetry).toEqual([]);
   });
 
+  test("records direct query telemetry when environment override enables telemetry", async () => {
+    const previousTelemetry = process.env.ZDR_TELEMETRY;
+    process.env.ZDR_TELEMETRY = "1";
+    try {
+      const target = join(tempDir, "agentscan");
+      const telemetry: TelemetryInput[] = [];
+      await mkdir(target);
+      await storeCorrection({
+        query: "ascan",
+        path: target,
+        now: new Date("2026-05-18T00:00:00.000Z"),
+      });
+
+      expect(
+        await main(
+          ["ascan"],
+          testDeps({
+            appendTelemetryEvent: async (event) => telemetry.push(event),
+            loadConfig: async () => defaultLoadedConfig({ telemetry: { enabled: false, max_events: 1000 } }),
+          }),
+        ),
+      ).toEqual({ code: 0 });
+
+      expect(telemetry).toHaveLength(1);
+      expect(telemetry[0]?.outcome).toBe("cache-hit");
+    } finally {
+      if (previousTelemetry === undefined) {
+        delete process.env.ZDR_TELEMETRY;
+      } else {
+        process.env.ZDR_TELEMETRY = previousTelemetry;
+      }
+    }
+  });
+
   test("falls back to model selection after stale direct query cache entry", async () => {
     const stalePath = join(tempDir, "missing");
     const selected = join(tempDir, "agentscan");

@@ -82,7 +82,7 @@ cat > "$config_dir/config.json" <<'JSON'
     "redact_tokens": true
   },
   "telemetry": {
-    "enabled": true,
+    "enabled": false,
     "max_events": 1000
   }
 }
@@ -189,7 +189,7 @@ Current v1 config shape:
     "redact_tokens": true
   },
   "telemetry": {
-    "enabled": true,
+    "enabled": false,
     "max_events": 1000
   }
 }
@@ -209,12 +209,12 @@ Privacy notes:
 
 - Home paths are redacted to `~` by default before provider calls.
 - Email addresses, common secret prefixes, and long token-like strings are redacted by default.
-- Privacy settings only affect provider prompts. Local state, telemetry, and correction-cache files may still contain raw queries and real paths because shell navigation and cache hits need them.
+- Privacy settings only affect provider prompts. Local state and correction-cache files may still contain raw queries and real paths because shell navigation and cache hits need them. Local telemetry is disabled by default; if enabled, telemetry records may contain raw queries and real paths.
 
 Telemetry notes:
 
-- Telemetry is written only to local JSONL under `$XDG_STATE_HOME/zdr/events.jsonl`, or `~/.local/state/zdr/events.jsonl` when `XDG_STATE_HOME` is unset.
-- Set `"telemetry": { "enabled": false }` in config or `ZDR_TELEMETRY=0` in the environment to disable event writes.
+- Telemetry is opt-in and written only to local JSONL under `$XDG_STATE_HOME/zdr/events.jsonl`, or `~/.local/state/zdr/events.jsonl` when `XDG_STATE_HOME` is unset.
+- Set `"telemetry": { "enabled": true }` in config or `ZDR_TELEMETRY=1` in the environment to enable event writes. `ZDR_TELEMETRY=0` disables event writes.
 - Use `zdr prune-events` to keep the newest `telemetry.max_events` records, or pass `--max-events` explicitly.
 
 Local timing diagnostics:
@@ -236,7 +236,7 @@ $XDG_STATE_HOME/zdr/events.jsonl
 # fallback: ~/.local/state/zdr/events.jsonl
 ```
 
-Telemetry is local-only. Direct-query and no-arg recovery modes record JSONL events for cache hits, model selections, picker outcomes, no-selections, and errors. Provider-backed model events include Pi usage data plus flattened token, prompt-cache, and cost fields when Pi exposes them. Set `ZDR_TELEMETRY=0` to disable event writes.
+Telemetry is local-only and opt-in. When enabled, direct-query and no-arg recovery modes record JSONL events for cache hits, model selections, picker outcomes, no-selections, and errors. Provider-backed model events include Pi usage data plus flattened token, prompt-cache, and cost fields when Pi exposes them.
 
 Inspect local telemetry:
 

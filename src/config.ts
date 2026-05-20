@@ -43,7 +43,7 @@ export const DEFAULT_CONFIG: ZdrConfig = {
     redact_tokens: true,
   },
   telemetry: {
-    enabled: true,
+    enabled: false,
     max_events: 1000,
   },
 };

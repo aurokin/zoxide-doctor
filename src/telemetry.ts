@@ -52,7 +52,14 @@ export function telemetryEnabled(env: NodeJS.ProcessEnv = process.env): boolean 
   if (!value) {
     return true;
   }
-  return !["0", "false", "off", "no"].includes(value.toLowerCase());
+  const normalized = value.trim().toLowerCase();
+  if (["1", "true", "on", "yes"].includes(normalized)) {
+    return true;
+  }
+  if (["0", "false", "off", "no"].includes(normalized)) {
+    return false;
+  }
+  return false;
 }
 
 export async function appendTelemetryEvent(

@@ -296,9 +296,16 @@ describe("telemetry storage", () => {
   });
 
   test("treats false, off, and no as disabled values", () => {
+    expect(telemetryEnabled()).toBe(true);
+    expect(telemetryEnabled({ ZDR_TELEMETRY: "true" })).toBe(true);
+    expect(telemetryEnabled({ ZDR_TELEMETRY: " true " })).toBe(true);
+    expect(telemetryEnabled({ ZDR_TELEMETRY: "on" })).toBe(true);
+    expect(telemetryEnabled({ ZDR_TELEMETRY: "yes" })).toBe(true);
+    expect(telemetryEnabled({ ZDR_TELEMETRY: "1" })).toBe(true);
+    expect(telemetryEnabled({ ZDR_TELEMETRY: "0 " })).toBe(false);
     expect(telemetryEnabled({ ZDR_TELEMETRY: "false" })).toBe(false);
     expect(telemetryEnabled({ ZDR_TELEMETRY: "off" })).toBe(false);
     expect(telemetryEnabled({ ZDR_TELEMETRY: "no" })).toBe(false);
-    expect(telemetryEnabled({ ZDR_TELEMETRY: "1" })).toBe(true);
+    expect(telemetryEnabled({ ZDR_TELEMETRY: "maybe" })).toBe(false);
   });
 });

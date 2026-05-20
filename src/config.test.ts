@@ -38,7 +38,7 @@ describe("config", () => {
         model: "anthropic/claude-sonnet-4.5",
       },
       telemetry: {
-        enabled: false,
+        enabled: true,
         max_events: 25,
       },
     });
@@ -53,7 +53,7 @@ describe("config", () => {
           model: "anthropic/claude-sonnet-4.5",
         },
         telemetry: {
-          enabled: false,
+          enabled: true,
           max_events: 25,
         },
       },
