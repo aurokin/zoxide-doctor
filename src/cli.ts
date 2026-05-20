@@ -2,7 +2,7 @@
 
 import packageJson from "../package.json" with { type: "json" };
 import { dirname, parse } from "node:path";
-import { buildCandidates, type Candidate } from "./candidates.js";
+import { buildCandidates, shouldAddLocalScanCandidates, type Candidate } from "./candidates.js";
 import { loadConfig, type LoadedConfig, type ZdrConfig } from "./config.js";
 import {
   forgetCorrection,
@@ -27,6 +27,7 @@ import { loadZoxideEntries, type ZoxideEntry } from "./zoxide.js";
 import type { PickerInput, PickerResult } from "./picker.js";
 import type { SelectionResult } from "./provider/select.js";
 import { summarizeProviderUsage } from "./provider/usage.js";
+import { scanLocalDirectories } from "./local-scan.js";
 import {
   appendTelemetryEvent,
   pruneTelemetryEvents,
@@ -54,6 +55,7 @@ type CliDeps = {
   inspectCorrection: (query: string) => Promise<CorrectionInspection>;
   storeCorrection: (input: { query: string; path: string; now?: Date }) => Promise<CorrectionEntry>;
   loadZoxideEntries: () => Promise<ZoxideEntry[]>;
+  scanLocalDirectories: (input: { query: string; roots: string[]; maxResults?: number }) => Promise<string[]>;
   selectCandidate: SelectCandidate;
   runPicker: (input: PickerInput) => Promise<PickerResult>;
   appendTelemetryEvent: (input: TelemetryInput) => Promise<unknown>;
@@ -129,6 +131,7 @@ const defaultDeps: CliDeps = {
   inspectCorrection,
   storeCorrection,
   loadZoxideEntries,
+  scanLocalDirectories,
   selectCandidate: async (input) => {
     const { selectCandidate } = await import("./provider/select.js");
     return selectCandidate(input);
@@ -604,11 +607,12 @@ async function buildProviderTimingContext(
   const retry = query.length > 0 ? null : await readRecoveryRetryForAttempt(state);
   const rejectedPaths = retry?.rejected_paths ?? [];
   const entries = await deps.loadZoxideEntries();
-  const candidates = buildCandidates({
+  const candidates = await buildSelectionCandidates({
     state,
     entries,
     limit: 50,
     rejectedPaths,
+    deps,
   });
   if (candidates.length === 0) {
     throw new Error("no zoxide candidates found");
@@ -892,6 +896,9 @@ function pickerScanRoots(state: FinishedZState, deps: CliDeps): string[] {
     state.after_pwd,
   ];
   for (const path of [state.before_pwd, state.after_pwd]) {
+    if (path.length === 0) {
+      continue;
+    }
     const parent = dirname(path);
     if (isSpecificScanRoot(parent)) {
       candidates.push(parent);
@@ -1054,10 +1061,12 @@ async function recordDirectQueryTelemetry(
 async function runDirectQuerySelection(queryArgv: string[], deps: CliDeps): Promise<SelectionResult> {
   const entries = await deps.loadZoxideEntries();
   const state = directQueryState(queryArgv, deps);
-  const candidates = buildCandidates({
+  const candidates = await buildSelectionCandidates({
     state,
     entries,
     limit: 50,
+    rejectedPaths: [],
+    deps,
   });
   if (candidates.length === 0) {
     throw new Error("no zoxide candidates found");
@@ -1115,11 +1124,12 @@ async function runSelection(
   if (options.announceRetry) {
     console.error("zdr: thinking harder...");
   }
-  const candidates = buildCandidates({
+  const candidates = await buildSelectionCandidates({
     state,
     entries,
     limit,
     rejectedPaths,
+    deps,
   });
   const config = (await deps.loadConfig()).config;
   const result = await deps.selectCandidate({
@@ -1141,11 +1151,12 @@ async function runDebugSelection(limit: number, deps: CliDeps) {
   const entries = await loadZoxideEntries();
   const retry = await readRecoveryRetryForAttempt(state);
   const rejectedPaths = retry?.rejected_paths ?? [];
-  const candidates = buildCandidates({
+  const candidates = await buildSelectionCandidates({
     state,
     entries,
     limit,
     rejectedPaths,
+    deps,
   });
   const config = (await deps.loadConfig()).config;
   const result = await deps.selectCandidate({
@@ -1156,6 +1167,39 @@ async function runDebugSelection(limit: number, deps: CliDeps) {
     privacy: config.privacy,
   });
   return { state, candidates, result, retry, rejectedPaths };
+}
+
+async function buildSelectionCandidates(input: {
+  state: FinishedZState;
+  entries: ZoxideEntry[];
+  limit: number;
+  rejectedPaths: string[];
+  deps: CliDeps;
+}): Promise<Candidate[]> {
+  const baseCandidates = buildCandidates({
+    state: input.state,
+    entries: input.entries,
+    limit: input.limit,
+    rejectedPaths: input.rejectedPaths,
+  });
+  if (!shouldAddLocalScanCandidates(baseCandidates)) {
+    return baseCandidates;
+  }
+  const localPaths = await input.deps.scanLocalDirectories({
+    query: input.state.query_argv.join(" ").trim(),
+    roots: pickerScanRoots(input.state, input.deps),
+    maxResults: 50,
+  });
+  if (localPaths.length === 0) {
+    return baseCandidates;
+  }
+  return buildCandidates({
+    state: input.state,
+    entries: input.entries,
+    localPaths,
+    limit: input.limit,
+    rejectedPaths: input.rejectedPaths,
+  });
 }
 
 async function providerSmokeCommand(args: string[], deps: CliDeps): Promise<CommandResult> {

@@ -151,6 +151,31 @@ describe("main direct query mode", () => {
     ]);
   });
 
+  test("adds local scan candidates for weak direct query zoxide matches", async () => {
+    const selected = join(tempDir, "agentscan");
+    await mkdir(selected);
+
+    expect(
+      await main(["ascan"], {
+        ...testDeps({
+          lookup: { status: "miss", query: "ascan" },
+          scanLocalDirectories: async (input) => {
+            expect(input.query).toBe("ascan");
+            expect(input.roots).toContain(tempDir);
+            return [selected];
+          },
+        }),
+        loadZoxideEntries: async () => [{ path: join(tempDir, "unrelated"), score: 10, rank: 1 }],
+        selectCandidate: async ({ candidates }) => {
+          expect(candidates.map((candidate) => candidate.path)).toContain(selected);
+          return selectionResult(candidates.find((candidate) => candidate.path === selected) ?? null);
+        },
+      }),
+    ).toEqual({ code: 0 });
+
+    expect(stdout).toEqual([selected]);
+  });
+
   test("passes configured provider and privacy settings to direct query selection", async () => {
     const selected = join(tempDir, "agentscan");
     await mkdir(selected);
@@ -1308,6 +1333,35 @@ describe("main recovery routing", () => {
     ]);
   });
 
+  test("adds local scan candidates for weak recovery zoxide matches", async () => {
+    const selected = join(tempDir, "agentscan");
+    const beforeDir = join(tempDir, "before");
+    const wrongDir = join(tempDir, "wrong");
+    await mkdir(beforeDir);
+    await mkdir(wrongDir);
+    await mkdir(selected);
+    await recordFinishedZAttempt("recovery-local-scan", wrongDir, ["ascan"], { beforePath: beforeDir });
+
+    expect(
+      await main([], {
+        ...testDeps({
+          scanLocalDirectories: async (input) => {
+            expect(input.query).toBe("ascan");
+            expect(input.roots).toEqual([tempDir, beforeDir, wrongDir]);
+            return [selected];
+          },
+        }),
+        loadZoxideEntries: async () => [{ path: join(tempDir, "unrelated"), score: 10, rank: 1 }],
+        selectCandidate: async ({ candidates }) => {
+          expect(candidates.map((candidate) => candidate.path)).toContain(selected);
+          return selectionResult(candidates.find((candidate) => candidate.path === selected) ?? null);
+        },
+      }),
+    ).toEqual({ code: 0 });
+
+    expect(stdout).toEqual([selected]);
+  });
+
   test("second no-arg recovery still uses model selection with rejected path context", async () => {
     const first = join(tempDir, "agentscan-old");
     const second = join(tempDir, "agentscan");
@@ -1553,6 +1607,7 @@ function testDeps(
     readTelemetryEvents?: ReadTelemetryEvents;
     pruneTelemetryEvents?: PruneTelemetryEvents;
     loadConfig?: LoadConfig;
+    scanLocalDirectories?: ScanLocalDirectories;
   } = {},
 ) {
   return {
@@ -1562,6 +1617,7 @@ function testDeps(
     loadZoxideEntries: async () => {
       throw new Error("unexpected zoxide load");
     },
+    scanLocalDirectories: input.scanLocalDirectories ?? (async () => []),
     selectCandidate: async () => {
       throw new Error("unexpected model selection");
     },
@@ -1796,6 +1852,7 @@ type AppendTelemetryEvent = (input: TelemetryInput) => Promise<unknown>;
 type ReadTelemetryEvents = (input?: { limit?: number }) => Promise<TelemetryEvent[]>;
 type PruneTelemetryEvents = (input: { maxEvents: number }) => Promise<TelemetryPruneResult>;
 type LoadConfig = () => Promise<LoadedConfig>;
+type ScanLocalDirectories = (input: { query: string; roots: string[]; maxResults?: number }) => Promise<string[]>;
 
 function selectionResult(candidate: Candidate | null, reason = "selected", confidence = candidate ? 0.8 : 0, usage: unknown = null) {
   return {

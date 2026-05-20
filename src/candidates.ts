@@ -17,12 +17,13 @@ export type Candidate = {
 export function buildCandidates(input: {
   state: FinishedZState;
   entries: ZoxideEntry[];
+  localPaths?: string[];
   limit?: number;
   rejectedPaths?: string[];
 }): Candidate[] {
   const query = input.state.query_argv.join(" ").trim();
   const rejectedPaths = new Set(input.rejectedPaths ?? []);
-  const scored = input.entries
+  const scored = mergeEntries(input.entries, input.localPaths ?? [])
     .filter((entry) => !rejectedPaths.has(entry.path))
     .map((entry) => scoreEntry(query, entry, input.state.after_pwd));
   scored.sort((a, b) => {
@@ -54,6 +55,27 @@ export function buildCandidates(input: {
       ...candidate,
       id: `c${String(index + 1).padStart(3, "0")}`,
     }));
+}
+
+export function shouldAddLocalScanCandidates(candidates: Candidate[]): boolean {
+  const best = candidates[0];
+  return !best || best.lexical_score < 45;
+}
+
+function mergeEntries(entries: ZoxideEntry[], localPaths: string[]): ZoxideEntry[] {
+  const merged = new Map<string, ZoxideEntry>();
+  for (const entry of entries) {
+    merged.set(entry.path, entry);
+  }
+  let rank = entries.length + 1;
+  for (const path of localPaths) {
+    if (merged.has(path)) {
+      continue;
+    }
+    merged.set(path, { path, score: 0, rank });
+    rank += 1;
+  }
+  return Array.from(merged.values());
 }
 
 function scoreEntry(query: string, entry: ZoxideEntry, landedPath: string): Candidate {

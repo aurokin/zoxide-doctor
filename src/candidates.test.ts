@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { buildCandidates } from "./candidates.js";
+import { buildCandidates, shouldAddLocalScanCandidates } from "./candidates.js";
 import type { FinishedZState } from "./shell-state.js";
 import type { ZoxideEntry } from "./zoxide.js";
 
@@ -63,5 +63,35 @@ describe("buildCandidates", () => {
     expect(candidates.some((candidate) => candidate.path === "/Users/auro/code/agentscan")).toBe(false);
     expect(candidates[0]?.id).toBe("c001");
     expect(candidates[0]?.path).toBe("/Users/auro/code/agentchat");
+  });
+
+  test("adds local scan paths as low-frecency candidates", () => {
+    const candidates = buildCandidates({
+      state: baseState,
+      entries: [{ path: "/Users/auro/code/wrong", score: 100, rank: 1 }],
+      localPaths: ["/Users/auro/code/agentscan"],
+      limit: 3,
+    });
+
+    expect(candidates.some((candidate) => candidate.path === "/Users/auro/code/agentscan")).toBe(true);
+    expect(candidates.find((candidate) => candidate.path === "/Users/auro/code/agentscan")?.reasons).toContain(
+      "basename subsequence",
+    );
+  });
+
+  test("requests local scan only when zoxide candidates are weak", () => {
+    const strong = buildCandidates({
+      state: baseState,
+      entries: [{ path: "/Users/auro/code/agentscan", score: 100, rank: 1 }],
+      limit: 3,
+    });
+    const weak = buildCandidates({
+      state: baseState,
+      entries: [{ path: "/Users/auro/code/unrelated", score: 100, rank: 1 }],
+      limit: 3,
+    });
+
+    expect(shouldAddLocalScanCandidates(strong)).toBe(false);
+    expect(shouldAddLocalScanCandidates(weak)).toBe(true);
   });
 });
