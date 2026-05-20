@@ -63,12 +63,50 @@ mkdir -p ~/.local/bin
 ln -sf "$PWD/dist/zdr" ~/.local/bin/zdr
 ```
 
-Verify:
+Create a config file when you want to override defaults:
+
+```bash
+config_dir="${XDG_CONFIG_HOME:-$HOME/.config}/zdr"
+mkdir -p "$config_dir"
+cat > "$config_dir/config.json" <<'JSON'
+{
+  "schema_version": 1,
+  "provider": {
+    "name": "openrouter",
+    "model": "deepseek/deepseek-v4-flash"
+  },
+  "privacy": {
+    "redact_home": true,
+    "redact_emails": true,
+    "redact_secrets": true,
+    "redact_tokens": true
+  },
+  "telemetry": {
+    "enabled": true,
+    "max_events": 1000
+  }
+}
+JSON
+```
+
+Set the provider API key. The default OpenRouter provider uses `OPENROUTER_API_KEY`:
+
+```bash
+export OPENROUTER_API_KEY=...
+```
+
+Verify local setup:
 
 ```bash
 zdr --version
 zdr provider-smoke
 zdr debug-config
+```
+
+Verify a live provider call:
+
+```bash
+zdr provider-smoke --live
 ```
 
 ## Shell Setup
@@ -157,6 +195,26 @@ Current v1 config shape:
 
 `zdr debug-config` prints the merged config and reports whether values came from defaults or a file. Provider-backed selection, `provider-smoke`, and provider timing diagnostics use `provider.name` and `provider.model`. Prompt construction uses the privacy redaction settings before sending context to the provider. Telemetry event writes honor `telemetry.enabled`, and `zdr prune-events` uses `telemetry.max_events` when no explicit limit is supplied.
 
+Provider/model notes:
+
+- The default provider is `openrouter` and the default model is `deepseek/deepseek-v4-flash`.
+- `provider.name` must be a provider known to Pi (`@earendil-works/pi-ai`).
+- `provider.model` must be one of Pi's known model IDs for that provider.
+- `zdr provider-smoke` checks provider/model lookup without making a network call.
+- `zdr provider-smoke --live` makes a tiny completion request and requires the provider's API key.
+
+Privacy notes:
+
+- Home paths are redacted to `~` by default before provider calls.
+- Email addresses, common secret prefixes, and long token-like strings are redacted by default.
+- Privacy settings only affect provider prompts. Local state, telemetry, and correction-cache files may still contain raw queries and real paths because shell navigation and cache hits need them.
+
+Telemetry notes:
+
+- Telemetry is written only to local JSONL under `$XDG_STATE_HOME/zdr/events.jsonl`, or `~/.local/state/zdr/events.jsonl` when `XDG_STATE_HOME` is unset.
+- Set `"telemetry": { "enabled": false }` in config or `ZDR_TELEMETRY=0` in the environment to disable event writes.
+- Use `zdr prune-events` to keep the newest `telemetry.max_events` records, or pass `--max-events` explicitly.
+
 Local timing diagnostics:
 
 ```bash
@@ -172,7 +230,8 @@ zdr debug-provider-timing ascan
 Local telemetry:
 
 ```text
-~/.local/state/zdr/events.jsonl
+$XDG_STATE_HOME/zdr/events.jsonl
+# fallback: ~/.local/state/zdr/events.jsonl
 ```
 
 Telemetry is local-only. Direct-query and no-arg recovery modes record JSONL events for cache hits, model selections, picker outcomes, no-selections, and errors. Provider-backed model events include Pi usage data plus flattened token, prompt-cache, and cost fields when Pi exposes them. Set `ZDR_TELEMETRY=0` to disable event writes.
