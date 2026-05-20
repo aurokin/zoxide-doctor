@@ -237,6 +237,40 @@ describe("main direct query mode", () => {
     ]);
   });
 
+  test("records provider token, cache, and cost telemetry for model fallback", async () => {
+    const selected = join(tempDir, "agentscan");
+    const telemetry: TelemetryInput[] = [];
+    const usage = providerUsage();
+    await mkdir(selected);
+
+    expect(
+      await main(["ascan"], {
+        ...testDeps({
+          lookup: { status: "miss", query: "ascan" },
+          appendTelemetryEvent: async (event) => telemetry.push(event),
+        }),
+        loadZoxideEntries: async () => [{ path: selected, score: 10, rank: 1 }],
+        selectCandidate: async ({ candidates }) => selectionResult(candidates[0] ?? null, "selected", 0.8, usage),
+      }),
+    ).toEqual({ code: 0 });
+
+    expect(telemetry[0]?.data).toMatchObject({
+      usage,
+      provider_usage: {
+        input_tokens: 100,
+        output_tokens: 25,
+        cache_read_tokens: 40,
+        cache_write_tokens: 10,
+        total_tokens: 175,
+        cost_input: 0.001,
+        cost_output: 0.002,
+        cost_cache_read: 0.0001,
+        cost_cache_write: 0.0005,
+        cost_total: 0.0036,
+      },
+    });
+  });
+
   test("keeps navigation successful when storing correction fails", async () => {
     const selected = join(tempDir, "agentscan");
 
@@ -993,7 +1027,7 @@ type AppendTelemetryEvent = (input: TelemetryInput) => Promise<unknown>;
 type ReadTelemetryEvents = (input?: { limit?: number }) => Promise<TelemetryEvent[]>;
 type PruneTelemetryEvents = (input: { maxEvents: number }) => Promise<TelemetryPruneResult>;
 
-function selectionResult(candidate: Candidate | null, reason = "selected", confidence = candidate ? 0.8 : 0) {
+function selectionResult(candidate: Candidate | null, reason = "selected", confidence = candidate ? 0.8 : 0, usage: unknown = null) {
   return {
     selection: {
       candidate_id: candidate?.id ?? null,
@@ -1002,7 +1036,24 @@ function selectionResult(candidate: Candidate | null, reason = "selected", confi
     },
     candidate,
     raw_text: "",
-    usage: null,
+    usage,
+  };
+}
+
+function providerUsage() {
+  return {
+    input: 100,
+    output: 25,
+    cacheRead: 40,
+    cacheWrite: 10,
+    totalTokens: 175,
+    cost: {
+      input: 0.001,
+      output: 0.002,
+      cacheRead: 0.0001,
+      cacheWrite: 0.0005,
+      total: 0.0036,
+    },
   };
 }
 

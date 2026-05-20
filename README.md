@@ -126,7 +126,7 @@ Local telemetry:
 ~/.local/state/zdr/events.jsonl
 ```
 
-Telemetry is local-only. Direct-query and no-arg recovery modes record JSONL events for cache hits, model selections, picker outcomes, no-selections, and errors. Set `ZDR_TELEMETRY=0` to disable event writes.
+Telemetry is local-only. Direct-query and no-arg recovery modes record JSONL events for cache hits, model selections, picker outcomes, no-selections, and errors. Provider-backed model events include Pi usage data plus flattened token, prompt-cache, and cost fields when Pi exposes them. Set `ZDR_TELEMETRY=0` to disable event writes.
 
 Inspect local telemetry:
 

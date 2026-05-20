@@ -25,6 +25,7 @@ import {
 import { loadZoxideEntries, type ZoxideEntry } from "./zoxide.js";
 import type { PickerInput, PickerResult } from "./picker.js";
 import type { SelectionResult } from "./provider/select.js";
+import { summarizeProviderUsage } from "./provider/usage.js";
 import {
   appendTelemetryEvent,
   pruneTelemetryEvents,
@@ -713,6 +714,7 @@ async function recordRecoveryTelemetry(
     error?: string;
   },
 ): Promise<void> {
+  const providerUsage = summarizeProviderUsage(input.usage);
   const data: Record<string, unknown> = {
     query: input.state?.query_argv.join(" ") ?? null,
     mode: input.mode,
@@ -721,6 +723,7 @@ async function recordRecoveryTelemetry(
     ...(input.confidence === undefined ? {} : { confidence: input.confidence }),
     ...(input.candidateCount === undefined ? {} : { candidate_count: input.candidateCount }),
     ...(input.usage === undefined || input.usage === null ? {} : { usage: input.usage }),
+    ...(providerUsage === null ? {} : { provider_usage: providerUsage }),
     ...(input.error === undefined ? {} : { error: input.error }),
   };
   try {
@@ -875,6 +878,7 @@ async function recordDirectQueryTelemetry(
     error?: string;
   },
 ): Promise<void> {
+  const providerUsage = summarizeProviderUsage(input.usage);
   const data: Record<string, unknown> = {
     query: input.query,
     cache_status: input.cacheStatus,
@@ -882,6 +886,7 @@ async function recordDirectQueryTelemetry(
     ...(input.confidence === undefined ? {} : { confidence: input.confidence }),
     ...(input.cached === undefined ? {} : { cached: input.cached }),
     ...(input.usage === undefined || input.usage === null ? {} : { usage: input.usage }),
+    ...(providerUsage === null ? {} : { provider_usage: providerUsage }),
     ...(input.error === undefined ? {} : { error: input.error }),
   };
   try {
