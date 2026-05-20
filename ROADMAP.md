@@ -2,7 +2,7 @@
 
 ## Current Status
 
-Status: v1.0 core implementation complete; packaging polish remains.
+Status: v1.0 core implementation complete; hardening and install-channel polish remain.
 
 The project currently has the v0.1 core recovery loop plus v0.2 direct-query correction memory in place. The core decisions are locked:
 
@@ -127,7 +127,18 @@ Exit criteria:
 - zsh, bash, and fish behavior is documented and tested.
 - Privacy defaults and opt-outs are clear.
 
+## Remaining Hardening Tasks
+
+1. Make telemetry privacy defaults stricter and harden provider error redaction.
+2. Add state/cache locking for correction memory and recovery retry files.
+3. Expand zsh and bash runtime shell tests to match fish coverage.
+4. Make retry-state preservation robust for `zdr` invocations with shell syntax variation.
+5. Add bounded local directory scan candidates before model selection when zoxide candidates are weak.
+6. Add real second-attempt model reasoning controls when Pi/provider support is available.
+7. Tighten config validation and document supported behavior knobs.
+8. Polish picker UX and docs.
+
 ## Remaining Packaging Tasks
 
-1. Decide distribution path: Homebrew tap, install script, release binaries, or some combination.
-2. Add release automation after the distribution path is chosen.
+1. Decide install channels: Homebrew tap, install script, or both.
+2. Publish the first tagged release after CI and release automation settle.

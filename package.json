@@ -3,6 +3,14 @@
   "version": "0.1.0",
   "description": "A small LLM-powered doctor for bad zoxide jumps.",
   "type": "module",
+  "packageManager": "bun@1.3.14",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aurokin/zoxide-doctor.git"
+  },
+  "engines": {
+    "bun": ">=1.3.14"
+  },
   "bin": {
     "zdr": "./dist/zdr"
   },
@@ -12,6 +20,8 @@
     "verify": "bun run check && bun test && bun run build",
     "start": "bun run src/cli.ts",
     "build": "bun build src/cli.ts --compile --outfile dist/zdr",
+    "release:check-version": "bun run scripts/check-release-version.ts",
+    "release:build": "bun run scripts/build-release.ts",
     "smoke": "bun run src/cli.ts --version",
     "timing": "bun run build && bun run scripts/timing-baseline.ts"
   },

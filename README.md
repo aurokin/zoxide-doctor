@@ -13,7 +13,7 @@ Direct lookup with `zdr <query>` is available as an experimental shortcut, but t
 
 ## Current Status
 
-This repository is in early implementation.
+This repository is in pre-release implementation.
 
 Implemented:
 
@@ -38,7 +38,7 @@ Implemented:
 
 Not implemented yet:
 
-- install packaging beyond local builds.
+- install channels such as Homebrew or a curl-based installer.
 
 ## Install
 
@@ -102,6 +102,8 @@ zdr --version
 zdr provider-smoke
 zdr debug-config
 ```
+
+Release archives are built by GitHub Actions when a `vX.Y.Z` tag matching `package.json` is pushed. Each release includes Bun-compiled `zdr` archives for macOS arm64, macOS x64, Linux arm64, and Linux x64 baseline, plus `SHA256SUMS`.
 
 Verify a live provider call:
 
