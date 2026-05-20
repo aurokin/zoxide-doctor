@@ -607,6 +607,30 @@ z foo "bar baz"
     expect(result.output).toContain("--status 7");
   });
 
+  test("zsh init preserves retry state for no-arg zdr command variants when zsh is available", () => {
+    const result = runZshRuntimeTest(`
+z() { cd "$ZDR_TARGET"; }
+eval "$(bun run --silent src/cli.ts init zsh)"
+preexec_functions=(\${preexec_functions:#_zdr_preexec})
+mkdir -p "$XDG_STATE_HOME/zdr"
+echo retry > "$XDG_STATE_HOME/zdr/recovery_retry.json"
+_zdr_preexec "  zdr  "
+[[ -e "$XDG_STATE_HOME/zdr/recovery_retry.json" ]] || exit 11
+_zdr_preexec "command zdr"
+[[ -e "$XDG_STATE_HOME/zdr/recovery_retry.json" ]] || exit 12
+_zdr_preexec "zdr ascan"
+[[ ! -e "$XDG_STATE_HOME/zdr/recovery_retry.json" ]] || exit 13
+echo retry > "$XDG_STATE_HOME/zdr/recovery_retry.json"
+_zdr_preexec "zdr#typo"
+[[ ! -e "$XDG_STATE_HOME/zdr/recovery_retry.json" ]] || exit 14
+`);
+
+    if (result.skipped) {
+      return;
+    }
+    expect(result.output).toContain("zsh smoke ran");
+  });
+
   test("bash init wraps z and navigation commands", async () => {
     expect(await main(["init", "bash"])).toEqual({ code: 0 });
 
@@ -714,7 +738,7 @@ z foo "bar baz"
     expect(script).toContain("command zdr $argv");
     expect(script).toContain("cd -- \"$__zdr_target\"");
     expect(script).toContain("function __zdr_preexec --on-event fish_preexec");
-    expect(script).toContain("case zdr");
+    expect(script).toContain("function __zdr_is_no_arg_zdr_command");
     expect(script).toContain("debug-config");
     expect(script).toContain("provider-smoke");
   });
@@ -793,8 +817,18 @@ mkdir -p "$XDG_STATE_HOME/zdr"
 echo retry > "$XDG_STATE_HOME/zdr/recovery_retry.json"
 emit fish_preexec zdr
 test -e "$XDG_STATE_HOME/zdr/recovery_retry.json"; or exit 11
+emit fish_preexec "  zdr  "
+test -e "$XDG_STATE_HOME/zdr/recovery_retry.json"; or exit 12
+emit fish_preexec "command zdr"
+test -e "$XDG_STATE_HOME/zdr/recovery_retry.json"; or exit 13
+emit fish_preexec "zdr ascan"
+test ! -e "$XDG_STATE_HOME/zdr/recovery_retry.json"; or exit 14
+echo retry > "$XDG_STATE_HOME/zdr/recovery_retry.json"
+emit fish_preexec "zdr#typo"
+test ! -e "$XDG_STATE_HOME/zdr/recovery_retry.json"; or exit 15
+echo retry > "$XDG_STATE_HOME/zdr/recovery_retry.json"
 emit fish_preexec ls
-test ! -e "$XDG_STATE_HOME/zdr/recovery_retry.json"; or exit 12
+test ! -e "$XDG_STATE_HOME/zdr/recovery_retry.json"; or exit 16
 `);
 
     if (result.skipped) {
