@@ -126,7 +126,7 @@ Local telemetry:
 ~/.local/state/zdr/events.jsonl
 ```
 
-Telemetry is local-only. Direct-query mode records JSONL events for cache hits, model selections, no-selections, and errors. Set `ZDR_TELEMETRY=0` to disable event writes.
+Telemetry is local-only. Direct-query and no-arg recovery modes record JSONL events for cache hits, model selections, picker outcomes, no-selections, and errors. Set `ZDR_TELEMETRY=0` to disable event writes.
 
 ## Limits
 

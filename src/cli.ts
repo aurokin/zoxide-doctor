@@ -452,21 +452,35 @@ function elapsedMs(start: number): number {
 }
 
 async function recoverCommand(deps: CliDeps): Promise<CommandResult> {
+  const start = performance.now();
+  let state: FinishedZState | null = null;
+  let mode: RecoveryMode | null = null;
+  let retry: Awaited<ReturnType<typeof readRecoveryRetryForAttempt>> = null;
   try {
-    const state = await readLastZState();
+    state = await readLastZState();
     if (!state) {
       throw new Error("no recorded z attempt found");
     }
-    const retry = await readRecoveryRetryForAttempt(state);
-    const mode = chooseRecoveryMode(retry);
+    retry = await readRecoveryRetryForAttempt(state);
+    mode = chooseRecoveryMode(retry);
     if (mode === "picker") {
       if (!retry) {
         throw new Error("no recovery retry state found");
       }
-      return pickerRecoveryCommand(state, retry, deps);
+      return pickerRecoveryCommand(state, retry, deps, start);
     }
-    const { result } = await runSelection(state, retry, 50, deps, { announceRetry: mode === "retry-model" });
+    const { result, candidates } = await runSelection(state, retry, 50, deps, { announceRetry: mode === "retry-model" });
     if (!result.candidate) {
+      await recordRecoveryTelemetry(deps, {
+        state,
+        retry,
+        mode,
+        start,
+        outcome: "no-selection",
+        confidence: result.selection.confidence,
+        candidateCount: candidates.length,
+        usage: result.usage,
+      });
       console.error(result.selection.reason ? `zdr: ${result.selection.reason}` : "zdr: no candidate selected");
       return { code: 1 };
     }
@@ -475,9 +489,28 @@ async function recoverCommand(deps: CliDeps): Promise<CommandResult> {
       rejectedPath: result.candidate.path,
       existing: retry,
     });
+    await recordRecoveryTelemetry(deps, {
+      state,
+      retry,
+      mode,
+      start,
+      outcome: "selected",
+      selectedPath: result.candidate.path,
+      confidence: result.selection.confidence,
+      candidateCount: candidates.length,
+      usage: result.usage,
+    });
     console.log(result.candidate.path);
     return { code: 0 };
   } catch (error) {
+    await recordRecoveryTelemetry(deps, {
+      state,
+      retry,
+      mode,
+      start,
+      outcome: "error",
+      error: error instanceof Error ? error.message : String(error),
+    });
     console.error(`zdr: ${error instanceof Error ? error.message : String(error)}`);
     return { code: 1 };
   }
@@ -487,6 +520,7 @@ async function pickerRecoveryCommand(
   state: FinishedZState,
   retry: NonNullable<Awaited<ReturnType<typeof readRecoveryRetryForAttempt>>>,
   deps: CliDeps,
+  start: number,
 ): Promise<CommandResult> {
   const entries = await deps.loadZoxideEntries();
   console.error("zdr: opening picker...");
@@ -498,14 +532,77 @@ async function pickerRecoveryCommand(
   });
   switch (result.status) {
     case "selected":
+      await recordRecoveryTelemetry(deps, {
+        state,
+        retry,
+        mode: "picker",
+        start,
+        outcome: "picker-selected",
+        selectedPath: result.path,
+        candidateCount: entries.length,
+      });
       console.log(result.path);
       return { code: 0 };
     case "cancelled":
+      await recordRecoveryTelemetry(deps, {
+        state,
+        retry,
+        mode: "picker",
+        start,
+        outcome: "picker-cancelled",
+        candidateCount: entries.length,
+      });
       console.error("zdr: picker cancelled");
       return { code: 1 };
     case "unavailable":
+      await recordRecoveryTelemetry(deps, {
+        state,
+        retry,
+        mode: "picker",
+        start,
+        outcome: "picker-unavailable",
+        candidateCount: entries.length,
+        error: result.reason,
+      });
       console.error(`zdr: ${result.reason}`);
       return { code: 1 };
+  }
+}
+
+async function recordRecoveryTelemetry(
+  deps: CliDeps,
+  input: {
+    state: FinishedZState | null;
+    retry: Awaited<ReturnType<typeof readRecoveryRetryForAttempt>>;
+    mode: RecoveryMode | null;
+    start: number;
+    outcome: string;
+    selectedPath?: string;
+    confidence?: number;
+    candidateCount?: number;
+    usage?: unknown;
+    error?: string;
+  },
+): Promise<void> {
+  const data: Record<string, unknown> = {
+    query: input.state?.query_argv.join(" ") ?? null,
+    mode: input.mode,
+    rejected_path_count: input.retry?.rejected_paths.length ?? 0,
+    ...(input.selectedPath === undefined ? {} : { selected_path: input.selectedPath }),
+    ...(input.confidence === undefined ? {} : { confidence: input.confidence }),
+    ...(input.candidateCount === undefined ? {} : { candidate_count: input.candidateCount }),
+    ...(input.usage === undefined || input.usage === null ? {} : { usage: input.usage }),
+    ...(input.error === undefined ? {} : { error: input.error }),
+  };
+  try {
+    await deps.appendTelemetryEvent({
+      kind: "recovery",
+      outcome: input.outcome,
+      durationMs: elapsedMs(input.start),
+      data,
+    });
+  } catch {
+    // Telemetry must never break navigation.
   }
 }
 

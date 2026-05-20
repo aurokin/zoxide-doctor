@@ -129,7 +129,7 @@ Exit criteria:
 
 ## Near-Term Implementation Tasks
 
-1. Wire local JSONL telemetry into recovery, cache, picker, and provider outcomes.
+1. Wire local JSONL telemetry into cache and provider outcomes.
 2. Add a way to inspect or disable local telemetry.
 3. Capture provider usage/cost/cache fields when Pi exposes them.
 4. Measure and document provider-backed recovery latency separately from local timing.

@@ -495,12 +495,13 @@ describe("main timing command", () => {
 describe("main recovery routing", () => {
   test("first no-arg recovery uses model selection without retry announcement", async () => {
     const selected = join(tempDir, "agentscan");
+    const telemetry: TelemetryInput[] = [];
     await mkdir(selected);
     await recordFinishedZAttempt("recovery-1", join(tempDir, "wrong"), ["ascan"]);
 
     expect(
       await main([], {
-        ...testDeps(),
+        ...testDeps({ appendTelemetryEvent: async (event) => telemetry.push(event) }),
         loadZoxideEntries: async () => [{ path: selected, score: 10, rank: 1 }],
         selectCandidate: async ({ rejectedPaths, candidates }) => {
           expect(rejectedPaths).toEqual([]);
@@ -511,11 +512,27 @@ describe("main recovery routing", () => {
 
     expect(stdout).toEqual([selected]);
     expect(stderr).toEqual([]);
+    expect(telemetry).toEqual([
+      {
+        kind: "recovery",
+        outcome: "selected",
+        durationMs: expect.any(Number),
+        data: {
+          query: "ascan",
+          mode: "model",
+          rejected_path_count: 0,
+          selected_path: selected,
+          confidence: 0.8,
+          candidate_count: 1,
+        },
+      },
+    ]);
   });
 
   test("second no-arg recovery still uses model selection with rejected path context", async () => {
     const first = join(tempDir, "agentscan-old");
     const second = join(tempDir, "agentscan");
+    const telemetry: TelemetryInput[] = [];
     await mkdir(first);
     await mkdir(second);
     await recordFinishedZAttempt("recovery-2", join(tempDir, "wrong"), ["ascan"]);
@@ -532,7 +549,7 @@ describe("main recovery routing", () => {
 
     expect(
       await main([], {
-        ...testDeps(),
+        ...testDeps({ appendTelemetryEvent: async (event) => telemetry.push(event) }),
         loadZoxideEntries: async () => [
           { path: first, score: 10, rank: 1 },
           { path: second, score: 9, rank: 2 },
@@ -547,6 +564,21 @@ describe("main recovery routing", () => {
 
     expect(stdout).toEqual([second]);
     expect(stderr).toEqual(["zdr: thinking harder..."]);
+    expect(telemetry).toEqual([
+      {
+        kind: "recovery",
+        outcome: "selected",
+        durationMs: expect.any(Number),
+        data: {
+          query: "ascan",
+          mode: "retry-model",
+          rejected_path_count: 1,
+          selected_path: second,
+          confidence: 0.8,
+          candidate_count: 1,
+        },
+      },
+    ]);
   });
 
   test("third no-arg recovery returns selected picker path without model selection", async () => {
@@ -555,6 +587,7 @@ describe("main recovery routing", () => {
     const selected = join(tempDir, "agentscan");
     const beforeDir = join(tempDir, "before");
     const wrongDir = join(tempDir, "wrong");
+    const telemetry: TelemetryInput[] = [];
     await mkdir(beforeDir);
     await mkdir(first);
     await mkdir(second);
@@ -582,6 +615,7 @@ describe("main recovery routing", () => {
     expect(
       await main([], {
         ...testDeps({
+          appendTelemetryEvent: async (event) => telemetry.push(event),
           runPicker: async (input) => {
             expect(input).toEqual({
               query: "ascan",
@@ -606,15 +640,31 @@ describe("main recovery routing", () => {
 
     expect(stdout).toEqual([selected]);
     expect(stderr).toEqual(["zdr: opening picker..."]);
+    expect(telemetry).toEqual([
+      {
+        kind: "recovery",
+        outcome: "picker-selected",
+        durationMs: expect.any(Number),
+        data: {
+          query: "ascan",
+          mode: "picker",
+          rejected_path_count: 2,
+          selected_path: selected,
+          candidate_count: 3,
+        },
+      },
+    ]);
   });
 
   test("third no-arg recovery reports picker cancellation", async () => {
+    const telemetry: TelemetryInput[] = [];
     await recordFinishedZAttempt("recovery-cancel", join(tempDir, "wrong"), ["ascan"]);
     await seedRejectedRecoveryPaths(["/repo/wrong-1", "/repo/wrong-2"]);
 
     expect(
       await main([], {
         ...testDeps({
+          appendTelemetryEvent: async (event) => telemetry.push(event),
           runPicker: async () => ({ status: "cancelled" }),
         }),
         loadZoxideEntries: async () => [{ path: "/repo/right", score: 10, rank: 1 }],
@@ -623,15 +673,30 @@ describe("main recovery routing", () => {
 
     expect(stdout).toEqual([]);
     expect(stderr).toEqual(["zdr: opening picker...", "zdr: picker cancelled"]);
+    expect(telemetry).toEqual([
+      {
+        kind: "recovery",
+        outcome: "picker-cancelled",
+        durationMs: expect.any(Number),
+        data: {
+          query: "ascan",
+          mode: "picker",
+          rejected_path_count: 2,
+          candidate_count: 1,
+        },
+      },
+    ]);
   });
 
   test("third no-arg recovery reports unavailable picker dependency", async () => {
+    const telemetry: TelemetryInput[] = [];
     await recordFinishedZAttempt("recovery-unavailable", join(tempDir, "wrong"), ["ascan"]);
     await seedRejectedRecoveryPaths(["/repo/wrong-1", "/repo/wrong-2"]);
 
     expect(
       await main([], {
         ...testDeps({
+          appendTelemetryEvent: async (event) => telemetry.push(event),
           runPicker: async () => ({ status: "unavailable", reason: "fzf is required for interactive picker fallback" }),
         }),
         loadZoxideEntries: async () => [{ path: "/repo/right", score: 10, rank: 1 }],
@@ -640,6 +705,20 @@ describe("main recovery routing", () => {
 
     expect(stdout).toEqual([]);
     expect(stderr).toEqual(["zdr: opening picker...", "zdr: fzf is required for interactive picker fallback"]);
+    expect(telemetry).toEqual([
+      {
+        kind: "recovery",
+        outcome: "picker-unavailable",
+        durationMs: expect.any(Number),
+        data: {
+          query: "ascan",
+          mode: "picker",
+          rejected_path_count: 2,
+          candidate_count: 1,
+          error: "fzf is required for interactive picker fallback",
+        },
+      },
+    ]);
   });
 
   test("third no-arg recovery filters broad picker scan parents", async () => {
@@ -662,6 +741,27 @@ describe("main recovery routing", () => {
 
     expect(stdout).toEqual([selected]);
     expect(stderr).toEqual(["zdr: opening picker..."]);
+  });
+
+  test("keeps recovery successful when telemetry fails", async () => {
+    const selected = join(tempDir, "agentscan");
+    await mkdir(selected);
+    await recordFinishedZAttempt("recovery-telemetry-fails", join(tempDir, "wrong"), ["ascan"]);
+
+    expect(
+      await main([], {
+        ...testDeps({
+          appendTelemetryEvent: async () => {
+            throw new Error("telemetry is read-only");
+          },
+        }),
+        loadZoxideEntries: async () => [{ path: selected, score: 10, rank: 1 }],
+        selectCandidate: async ({ candidates }) => selectionResult(candidates[0] ?? null),
+      }),
+    ).toEqual({ code: 0 });
+
+    expect(stdout).toEqual([selected]);
+    expect(stderr).toEqual([]);
   });
 });
 
