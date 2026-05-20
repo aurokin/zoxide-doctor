@@ -13,7 +13,7 @@ import {
   type CorrectionEntry,
 } from "./corrections.js";
 import type { PickerInput, PickerResult } from "./picker.js";
-import type { TelemetryInput } from "./telemetry.js";
+import type { TelemetryEvent, TelemetryInput } from "./telemetry.js";
 
 let previousXdgCacheHome: string | undefined;
 let previousXdgStateHome: string | undefined;
@@ -403,8 +403,82 @@ describe("main correction cache commands", () => {
 
     const script = stdout.join("\n");
     expect(script).toContain("debug-corrections");
+    expect(script).toContain("debug-events");
     expect(script).toContain("debug-timing");
     expect(script).toContain("forget");
+  });
+});
+
+describe("main telemetry commands", () => {
+  test("prints empty telemetry JSON when event file is missing", async () => {
+    expect(await main(["debug-events"], testDeps())).toEqual({ code: 0 });
+
+    expect(stdout).toEqual(["[]"]);
+    expect(stderr).toEqual([]);
+  });
+
+  test("prints telemetry event JSON", async () => {
+    const events: TelemetryEvent[] = [
+      {
+        schema_version: 1,
+        kind: "recovery",
+        outcome: "selected",
+        occurred_at: "2026-05-20T12:00:00.000Z",
+        data: {
+          query: "ascan",
+        },
+      },
+    ];
+
+    expect(await main(["debug-events"], testDeps({ readTelemetryEvents: async () => events }))).toEqual({ code: 0 });
+
+    expect(JSON.parse(stdout.join("\n"))).toEqual(events);
+    expect(stderr).toEqual([]);
+  });
+
+  test("passes telemetry event limit to reader", async () => {
+    let limit: number | undefined;
+
+    expect(
+      await main(
+        ["debug-events", "--limit", "2"],
+        testDeps({
+          readTelemetryEvents: async (input) => {
+            limit = input?.limit;
+            return [];
+          },
+        }),
+      ),
+    ).toEqual({ code: 0 });
+
+    expect(limit).toBe(2);
+    expect(stdout).toEqual(["[]"]);
+    expect(stderr).toEqual([]);
+  });
+
+  test("supports equals-form telemetry event limit", async () => {
+    let limit: number | undefined;
+
+    expect(
+      await main(
+        ["debug-events", "--limit=3"],
+        testDeps({
+          readTelemetryEvents: async (input) => {
+            limit = input?.limit;
+            return [];
+          },
+        }),
+      ),
+    ).toEqual({ code: 0 });
+
+    expect(limit).toBe(3);
+  });
+
+  test("rejects invalid telemetry event limit", async () => {
+    expect(await main(["debug-events", "--limit", "0"], testDeps())).toEqual({ code: 2 });
+
+    expect(stdout).toEqual([]);
+    expect(stderr).toEqual(["zdr: --limit must be a positive integer"]);
   });
 });
 
@@ -771,6 +845,7 @@ function testDeps(
     storeCorrection?: StoreCorrection;
     runPicker?: RunPicker;
     appendTelemetryEvent?: AppendTelemetryEvent;
+    readTelemetryEvents?: ReadTelemetryEvents;
   } = {},
 ) {
   return {
@@ -789,6 +864,7 @@ function testDeps(
           throw new Error("unexpected picker");
         },
     appendTelemetryEvent: input.appendTelemetryEvent ?? (async () => {}),
+    readTelemetryEvents: input.readTelemetryEvents ?? (async () => []),
     cwd: () => tempDir,
     now: () => new Date("2026-05-18T00:00:00.000Z"),
   };
@@ -826,6 +902,7 @@ async function readCorrectionFromCache(query: string): Promise<CorrectionLookup>
 type StoreCorrection = (input: { query: string; path: string; now?: Date }) => Promise<CorrectionEntry>;
 type RunPicker = (input: PickerInput) => Promise<PickerResult>;
 type AppendTelemetryEvent = (input: TelemetryInput) => Promise<unknown>;
+type ReadTelemetryEvents = (input?: { limit?: number }) => Promise<TelemetryEvent[]>;
 
 function selectionResult(candidate: Candidate | null, reason = "selected", confidence = candidate ? 0.8 : 0) {
   return {

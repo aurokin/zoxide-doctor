@@ -128,6 +128,15 @@ Local telemetry:
 
 Telemetry is local-only. Direct-query and no-arg recovery modes record JSONL events for cache hits, model selections, picker outcomes, no-selections, and errors. Set `ZDR_TELEMETRY=0` to disable event writes.
 
+Inspect local telemetry:
+
+```bash
+zdr debug-events
+zdr debug-events --limit 20
+```
+
+`debug-events` prints the local JSONL telemetry log as a JSON array. It skips malformed JSONL records instead of failing the whole read.
+
 ## Limits
 
 - zsh is the only supported shell integration right now.

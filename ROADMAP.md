@@ -15,7 +15,7 @@ The project currently has the v0.1 core recovery loop plus v0.2 direct-query cor
 - Provider layer: Pi provider/model SDK (`@earendil-works/pi-ai`), with OpenRouter as the v0.1 default provider.
 - Scope boundary: use Pi's completion/model APIs only; do not use Pi's agent loop, coding-agent harness, TUI, tool execution, or session machinery.
 
-Current implementation status: no-arg recovery records rejected `zdr` suggestions for repeat attempts, third-attempt recovery opens an `fzf` picker over zoxide candidates plus optional `fd` scan results, and `zdr <query>` uses local correction-cache hits before falling back to model selection and caching high-confidence direct-query results.
+Current implementation status: no-arg recovery records rejected `zdr` suggestions for repeat attempts, third-attempt recovery opens an `fzf` picker over zoxide candidates plus optional `fd` scan results, `zdr <query>` uses local correction-cache hits before falling back to model selection and caching high-confidence direct-query results, and local telemetry records are inspectable with `zdr debug-events`.
 
 ## Release Plan
 
@@ -130,6 +130,6 @@ Exit criteria:
 ## Near-Term Implementation Tasks
 
 1. Wire local JSONL telemetry into cache and provider outcomes.
-2. Add a way to inspect or disable local telemetry.
+2. Decide telemetry retention/pruning policy.
 3. Capture provider usage/cost/cache fields when Pi exposes them.
 4. Measure and document provider-backed recovery latency separately from local timing.

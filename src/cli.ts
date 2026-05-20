@@ -25,7 +25,7 @@ import {
 import { loadZoxideEntries, type ZoxideEntry } from "./zoxide.js";
 import type { PickerInput, PickerResult } from "./picker.js";
 import type { SelectionResult } from "./provider/select.js";
-import { appendTelemetryEvent, type TelemetryInput } from "./telemetry.js";
+import { appendTelemetryEvent, readTelemetryEvents, type TelemetryEvent, type TelemetryInput } from "./telemetry.js";
 
 type CommandResult = {
   code: number;
@@ -45,6 +45,7 @@ type CliDeps = {
   selectCandidate: SelectCandidate;
   runPicker: (input: PickerInput) => Promise<PickerResult>;
   appendTelemetryEvent: (input: TelemetryInput) => Promise<unknown>;
+  readTelemetryEvents: (input?: { limit?: number }) => Promise<TelemetryEvent[]>;
   cwd: () => string;
   now: () => Date;
 };
@@ -86,6 +87,8 @@ export async function main(argv: string[], deps: CliDeps = defaultDeps): Promise
       return debugSelectCommand(args);
     case "debug-corrections":
       return debugCorrectionsCommand();
+    case "debug-events":
+      return debugEventsCommand(args, deps);
     case "debug-timing":
       return debugTimingCommand(args, deps);
     case "forget":
@@ -115,6 +118,7 @@ const defaultDeps: CliDeps = {
     return runPicker(input);
   },
   appendTelemetryEvent,
+  readTelemetryEvents,
   cwd: () => process.cwd(),
   now: () => new Date(),
 };
@@ -262,6 +266,60 @@ async function debugCorrectionsCommand(): Promise<CommandResult> {
     console.error(`zdr: ${error instanceof Error ? error.message : String(error)}`);
     return { code: 1 };
   }
+}
+
+async function debugEventsCommand(args: string[], deps: CliDeps): Promise<CommandResult> {
+  const parsed = parseDebugEventsArgs(args);
+  if (!parsed.ok) {
+    console.error(`zdr: ${parsed.error}`);
+    return { code: 2 };
+  }
+
+  try {
+    const options = parsed.limit === undefined ? {} : { limit: parsed.limit };
+    console.log(JSON.stringify(await deps.readTelemetryEvents(options), null, 2));
+    return { code: 0 };
+  } catch (error) {
+    console.error(`zdr: ${error instanceof Error ? error.message : String(error)}`);
+    return { code: 1 };
+  }
+}
+
+type DebugEventsArgs = { ok: true; limit?: number } | { ok: false; error: string };
+
+function parseDebugEventsArgs(args: string[]): DebugEventsArgs {
+  let limit: number | undefined;
+
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+    if (!arg) {
+      return { ok: false, error: "unexpected missing argument" };
+    }
+    if (arg === "--limit") {
+      const value = args[index + 1];
+      if (!value) {
+        return { ok: false, error: "--limit requires a value" };
+      }
+      const parsed = Number(value);
+      if (!Number.isInteger(parsed) || parsed < 1) {
+        return { ok: false, error: "--limit must be a positive integer" };
+      }
+      limit = parsed;
+      index += 1;
+      continue;
+    }
+    if (arg.startsWith("--limit=")) {
+      const parsed = Number(arg.slice("--limit=".length));
+      if (!Number.isInteger(parsed) || parsed < 1) {
+        return { ok: false, error: "--limit must be a positive integer" };
+      }
+      limit = parsed;
+      continue;
+    }
+    return { ok: false, error: `unknown debug-events argument: ${arg}` };
+  }
+
+  return limit === undefined ? { ok: true } : { ok: true, limit };
 }
 
 async function forgetCommand(args: string[]): Promise<CommandResult> {
@@ -882,6 +940,8 @@ Usage:
   zdr debug-select   Ask the model to select from recorded candidates
   zdr debug-corrections
                       Print direct-query correction cache
+  zdr debug-events [--limit <count>]
+                      Print local telemetry events as JSON
   zdr debug-timing [query]
                       Measure local timing paths as JSON
   zdr debug-timing [query] --budget-ms <ms>
@@ -921,7 +981,7 @@ function zshInitScript(): string {
     "",
     "zdr() {",
     "  case \"$1\" in",
-    "    init|record-z|finish-z|clear-recovery-retry|debug-state|debug-candidates|debug-select|debug-corrections|debug-timing|forget|provider-smoke|--*|-*)",
+    "    init|record-z|finish-z|clear-recovery-retry|debug-state|debug-candidates|debug-select|debug-corrections|debug-events|debug-timing|forget|provider-smoke|--*|-*)",
     "      command zdr \"$@\"",
     "      return $?",
     "      ;;",
