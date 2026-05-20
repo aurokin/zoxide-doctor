@@ -543,6 +543,68 @@ describe("main correction cache commands", () => {
     expect(script).toContain("debug-provider-timing");
     expect(script).toContain("prune-events");
     expect(script).toContain("forget");
+    expect(script).toContain('cd -- "$__zdr_target"');
+  });
+
+  test("zsh init records z attempts with runtime attempt IDs when zsh is available", () => {
+    const result = runZshRuntimeTest(`
+z() { cd "$ZDR_TARGET"; }
+eval "$(bun run --silent src/cli.ts init zsh)"
+cd "$HOME"
+z ascan
+[[ "$PWD" == "$ZDR_TARGET" ]] || exit 11
+cd "$HOME"
+zdr
+[[ "$PWD" == "$ZDR_TARGET" ]] || exit 12
+`);
+
+    if (result.skipped) {
+      return;
+    }
+    expect(result.output).toContain("zsh smoke ran");
+    expect(result.output).toContain("record-z --attempt zsh-");
+    expect(result.output).toContain("--shell zsh -- ascan");
+    expect(result.output).toContain("finish-z --attempt zsh-");
+  });
+
+  test("zsh init bypasses non-navigation zdr commands when zsh is available", () => {
+    const result = runZshRuntimeTest(`
+z() { cd "$ZDR_TARGET"; }
+eval "$(bun run --silent src/cli.ts init zsh)"
+cd "$HOME"
+zdr --version >/dev/null
+[[ "$PWD" == "$HOME" ]] || exit 11
+zdr debug-config >/dev/null
+[[ "$PWD" == "$HOME" ]] || exit 12
+zdr provider-smoke >/dev/null
+[[ "$PWD" == "$HOME" ]] || exit 13
+`);
+
+    if (result.skipped) {
+      return;
+    }
+    expect(result.output).toContain("--version");
+    expect(result.output).toContain("debug-config");
+    expect(result.output).toContain("provider-smoke");
+  });
+
+  test("zsh init preserves original z argv and failure status when zsh is available", () => {
+    const result = runZshRuntimeTest(`
+z() {
+  printf '%s\\n' "$@" > "$ZDR_ORIGINAL_Z_LOG"
+  return 7
+}
+eval "$(bun run --silent src/cli.ts init zsh)"
+z foo "bar baz"
+[[ "$?" -eq 7 ]] || exit 11
+`);
+
+    if (result.skipped) {
+      return;
+    }
+    expect(result.output).toContain("--shell zsh -- foo bar baz");
+    expect(result.output).toContain("finish-z --attempt zsh-");
+    expect(result.output).toContain("--status 7");
   });
 
   test("bash init wraps z and navigation commands", async () => {
@@ -561,6 +623,7 @@ describe("main correction cache commands", () => {
     expect(script).toContain('case "$1" in');
     expect(script).toContain("debug-config");
     expect(script).toContain("provider-smoke");
+    expect(script).toContain('cd -- "$__zdr_target"');
   });
 
   test("bash init preserves function-style z definitions", () => {
@@ -576,6 +639,67 @@ describe("main correction cache commands", () => {
     });
 
     expect(result.exitCode).toBe(0);
+  });
+
+  test("bash init records z attempts with runtime attempt IDs when bash is available", () => {
+    const result = runBashRuntimeTest(`
+z() { cd "$ZDR_TARGET"; }
+eval "$(bun run --silent src/cli.ts init bash)"
+cd "$HOME"
+z ascan
+[[ "$PWD" == "$ZDR_TARGET" ]] || exit 11
+cd "$HOME"
+zdr
+[[ "$PWD" == "$ZDR_TARGET" ]] || exit 12
+`);
+
+    if (result.skipped) {
+      return;
+    }
+    expect(result.output).toContain("bash smoke ran");
+    expect(result.output).toContain("record-z --attempt bash-");
+    expect(result.output).toContain("--shell bash -- ascan");
+    expect(result.output).toContain("finish-z --attempt bash-");
+  });
+
+  test("bash init bypasses non-navigation zdr commands when bash is available", () => {
+    const result = runBashRuntimeTest(`
+z() { cd "$ZDR_TARGET"; }
+eval "$(bun run --silent src/cli.ts init bash)"
+cd "$HOME"
+zdr --version >/dev/null
+[[ "$PWD" == "$HOME" ]] || exit 11
+zdr debug-config >/dev/null
+[[ "$PWD" == "$HOME" ]] || exit 12
+zdr provider-smoke >/dev/null
+[[ "$PWD" == "$HOME" ]] || exit 13
+`);
+
+    if (result.skipped) {
+      return;
+    }
+    expect(result.output).toContain("--version");
+    expect(result.output).toContain("debug-config");
+    expect(result.output).toContain("provider-smoke");
+  });
+
+  test("bash init preserves original z argv and failure status when bash is available", () => {
+    const result = runBashRuntimeTest(`
+z() {
+  printf '%s\\n' "$@" > "$ZDR_ORIGINAL_Z_LOG"
+  return 7
+}
+eval "$(bun run --silent src/cli.ts init bash)"
+z foo "bar baz"
+[[ "$?" -eq 7 ]] || exit 11
+`);
+
+    if (result.skipped) {
+      return;
+    }
+    expect(result.output).toContain("--shell bash -- foo bar baz");
+    expect(result.output).toContain("finish-z --attempt bash-");
+    expect(result.output).toContain("--status 7");
   });
 
   test("fish init wraps z and navigation commands", async () => {
@@ -1494,6 +1618,78 @@ async function seedRejectedRecoveryPaths(paths: string[]): Promise<void> {
 async function readCorrectionFromCache(query: string): Promise<CorrectionLookup> {
   const { lookupCorrection } = await import("./corrections.js");
   return lookupCorrection(query);
+}
+
+function runZshRuntimeTest(zshScript: string): { skipped: boolean; output: string; stderr: string } {
+  return runShellRuntimeTest("zsh", "zsh smoke ran", zshScript);
+}
+
+function runBashRuntimeTest(bashScript: string): { skipped: boolean; output: string; stderr: string } {
+  return runShellRuntimeTest("bash", "bash smoke ran", bashScript);
+}
+
+function runShellRuntimeTest(shellName: "zsh" | "bash", smokeLine: string, shellScript: string): { skipped: boolean; output: string; stderr: string } {
+  const result = Bun.spawnSync({
+    cmd: [
+      "bash",
+      "-lc",
+      `
+        command -v ${shellName} >/dev/null || { echo "${shellName} unavailable"; exit 0; }
+        tmp=$(mktemp -d)
+        mkdir -p "$tmp/bin" "$tmp/home" "$tmp/target dir" "$tmp/state" "$tmp/config"
+        cat > "$tmp/bin/zdr" <<'ZDR'
+#!/usr/bin/env bash
+printf '%s\\n' "$*" >> "$ZDR_LOG"
+case "$1" in
+  record-z|finish-z|clear-recovery-retry|debug-state|debug-candidates|debug-select|debug-corrections|debug-events|debug-timing|debug-provider-timing|prune-events|forget|init|--*|-*)
+    if [ "$1" = "--version" ]; then
+      printf '0.0.0-test\\n'
+    fi
+    exit 0
+    ;;
+  debug-config)
+    printf '{"source":"test"}\\n'
+    exit 0
+    ;;
+  provider-smoke)
+    printf '{"provider":"test"}\\n'
+    exit 0
+    ;;
+esac
+printf '%s\\n' "$ZDR_TARGET"
+ZDR
+        chmod +x "$tmp/bin/zdr"
+        cat > "$tmp/test.${shellName}" <<'SHELL'
+${shellScript}
+SHELL
+        : > "$tmp/log"
+        PATH="$tmp/bin:$PATH" \\
+          ZDR_LOG="$tmp/log" \\
+          ZDR_ORIGINAL_Z_LOG="$tmp/original-z.log" \\
+          ZDR_TARGET="$tmp/target dir" \\
+          HOME="$tmp/home" \\
+          XDG_STATE_HOME="$tmp/state" \\
+          XDG_CONFIG_HOME="$tmp/config" \\
+          ${shellName} "$tmp/test.${shellName}"
+        status=$?
+        echo "${smokeLine}"
+        cat "$tmp/log"
+        rm -rf "$tmp"
+        exit "$status"
+      `,
+    ],
+    cwd: process.cwd(),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const output = result.stdout.toString();
+  expect(result.exitCode).toBe(0);
+  return {
+    skipped: output.includes(`${shellName} unavailable`),
+    output,
+    stderr: result.stderr.toString(),
+  };
 }
 
 function runFishRuntimeTest(fishScript: string): { skipped: boolean; output: string; stderr: string } {
