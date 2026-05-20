@@ -15,7 +15,7 @@ The project currently has the v0.1 core recovery loop plus v0.2 direct-query cor
 - Provider layer: Pi provider/model SDK (`@earendil-works/pi-ai`), with OpenRouter as the v0.1 default provider.
 - Scope boundary: use Pi's completion/model APIs only; do not use Pi's agent loop, coding-agent harness, TUI, tool execution, or session machinery.
 
-Current implementation status: no-arg recovery records rejected `zdr` suggestions for repeat attempts, third-attempt recovery opens an `fzf` picker over zoxide candidates plus optional `fd` scan results, `zdr <query>` uses local correction-cache hits before falling back to model selection and caching high-confidence direct-query results, and local telemetry records are inspectable with `zdr debug-events` and manually prunable with `zdr prune-events`. Provider-backed telemetry records Pi usage plus flattened token, prompt-cache, and cost fields when exposed.
+Current implementation status: no-arg recovery records rejected `zdr` suggestions for repeat attempts, third-attempt recovery opens an `fzf` picker over zoxide candidates plus optional `fd` scan results, `zdr <query>` uses local correction-cache hits before falling back to model selection and caching high-confidence direct-query results, and local telemetry records are inspectable with `zdr debug-events` and manually prunable with `zdr prune-events`. Provider-backed telemetry records Pi usage plus flattened token, prompt-cache, and cost fields when exposed, and live provider latency is measured separately with `zdr debug-provider-timing`.
 
 ## Release Plan
 
@@ -129,5 +129,7 @@ Exit criteria:
 
 ## Near-Term Implementation Tasks
 
-1. Wire local JSONL telemetry into cache and provider outcomes.
-2. Measure and document provider-backed recovery latency separately from local timing.
+1. Decide the v1.0 config file shape.
+2. Add bash shell integration.
+3. Add fish shell integration.
+4. Document provider/model configuration and install flow.

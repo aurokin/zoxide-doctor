@@ -100,6 +100,8 @@ export async function main(argv: string[], deps: CliDeps = defaultDeps): Promise
       return debugEventsCommand(args, deps);
     case "debug-timing":
       return debugTimingCommand(args, deps);
+    case "debug-provider-timing":
+      return debugProviderTimingCommand(args, deps);
     case "prune-events":
       return pruneEventsCommand(args, deps);
     case "forget":
@@ -478,6 +480,122 @@ async function debugTimingCommand(args: string[], deps: CliDeps): Promise<Comman
     ),
   );
   return { code: 0 };
+}
+
+async function debugProviderTimingCommand(args: string[], deps: CliDeps): Promise<CommandResult> {
+  const parsed = parseDebugProviderTimingArgs(args);
+  if (!parsed.ok) {
+    console.error(`zdr: ${parsed.error}`);
+    return { code: 2 };
+  }
+
+  const commandStart = performance.now();
+  const measurements: TimingMeasurement[] = [];
+  let state: FinishedZState | null = null;
+  let rejectedPaths: string[] = [];
+  let candidates: Candidate[] = [];
+
+  measurements.push(
+    await measureStep("provider-context", async () => {
+      const context = await buildProviderTimingContext(parsed.queryArgv, deps);
+      state = context.state;
+      rejectedPaths = context.rejectedPaths;
+      candidates = context.candidates;
+      return {
+        query: state.query_argv.join(" "),
+        mode: parsed.queryArgv.length > 0 ? "direct-query" : "recovery",
+        zoxide_entry_count: context.entryCount,
+        candidate_count: candidates.length,
+        rejected_path_count: rejectedPaths.length,
+      };
+    }),
+  );
+
+  const selectionState = state;
+  if (selectionState && candidates.length > 0) {
+    measurements.push(
+      await measureStep("provider-selection", async () => {
+        const result = await deps.selectCandidate({
+          state: selectionState,
+          candidates,
+          rejectedPaths,
+        });
+        const providerUsage = summarizeProviderUsage(result.usage);
+        return {
+          selected_candidate_id: result.selection.candidate_id,
+          selected_path: result.candidate?.path ?? null,
+          confidence: result.selection.confidence,
+          reason: result.selection.reason,
+          ...(result.usage === null || result.usage === undefined ? {} : { usage: result.usage }),
+          ...(providerUsage === null ? {} : { provider_usage: providerUsage }),
+        };
+      }),
+    );
+  } else {
+    measurements.push({
+      name: "provider-selection",
+      ok: false,
+      skipped: true,
+      duration_ms: 0,
+      error: "provider context did not produce candidates",
+    });
+  }
+
+  console.log(
+    JSON.stringify(
+      {
+        schema_version: 1,
+        command: "debug-provider-timing",
+        total_duration_ms: elapsedMs(commandStart),
+        measurements,
+      },
+      null,
+      2,
+    ),
+  );
+  return { code: 0 };
+}
+
+type DebugProviderTimingArgs =
+  | { ok: true; queryArgv: string[] }
+  | { ok: false; error: string };
+
+function parseDebugProviderTimingArgs(args: string[]): DebugProviderTimingArgs {
+  for (const arg of args) {
+    if (arg.startsWith("-")) {
+      return { ok: false, error: `unknown debug-provider-timing option: ${arg}` };
+    }
+  }
+  return { ok: true, queryArgv: args };
+}
+
+async function buildProviderTimingContext(
+  queryArgv: string[],
+  deps: CliDeps,
+): Promise<{ state: FinishedZState; rejectedPaths: string[]; candidates: Candidate[]; entryCount: number }> {
+  const query = queryArgv.join(" ").trim();
+  const state = query.length > 0 ? directQueryState(queryArgv, deps) : await requireRecordedZState();
+  const retry = query.length > 0 ? null : await readRecoveryRetryForAttempt(state);
+  const rejectedPaths = retry?.rejected_paths ?? [];
+  const entries = await deps.loadZoxideEntries();
+  const candidates = buildCandidates({
+    state,
+    entries,
+    limit: 50,
+    rejectedPaths,
+  });
+  if (candidates.length === 0) {
+    throw new Error("no zoxide candidates found");
+  }
+  return { state, rejectedPaths, candidates, entryCount: entries.length };
+}
+
+async function requireRecordedZState(): Promise<FinishedZState> {
+  const state = await readLastZState();
+  if (!state) {
+    throw new Error("no recorded z attempt found");
+  }
+  return state;
 }
 
 type DebugTimingArgs =
@@ -1022,6 +1140,8 @@ Usage:
                       Measure local timing paths as JSON
   zdr debug-timing [query] --budget-ms <ms>
                       Include local timing budget status in JSON
+  zdr debug-provider-timing [query]
+                      Measure live provider selection timing as JSON
   zdr prune-events --max-events <count>
                       Keep only the newest local telemetry events
   zdr forget <query> Remove one exact direct-query correction
@@ -1059,7 +1179,7 @@ function zshInitScript(): string {
     "",
     "zdr() {",
     "  case \"$1\" in",
-    "    init|record-z|finish-z|clear-recovery-retry|debug-state|debug-candidates|debug-select|debug-corrections|debug-events|debug-timing|prune-events|forget|provider-smoke|--*|-*)",
+    "    init|record-z|finish-z|clear-recovery-retry|debug-state|debug-candidates|debug-select|debug-corrections|debug-events|debug-timing|debug-provider-timing|prune-events|forget|provider-smoke|--*|-*)",
     "      command zdr \"$@\"",
     "      return $?",
     "      ;;",

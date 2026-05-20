@@ -116,9 +116,11 @@ Local timing diagnostics:
 zdr debug-timing
 zdr debug-timing ascan
 zdr debug-timing ascan --budget-ms 150
+zdr debug-provider-timing ascan
 ```
 
 `debug-timing` prints JSON for local paths such as version metadata, correction-cache reads, exact-query cache lookup when a query is supplied, and no-arg recovery context gathering before any provider call. `--budget-ms` adds budget metadata to the JSON without changing the command's exit status.
+`debug-provider-timing` is an opt-in live provider diagnostic. It separates local candidate setup from the provider selection call and includes provider usage fields when Pi returns them.
 
 Local telemetry:
 
@@ -170,7 +172,7 @@ bun run timing -- ascan
 bun run timing -- --repeat 25 --budget-ms 150 ascan
 ```
 
-`bun run timing` builds `dist/zdr`, runs `zdr debug-timing` repeatedly, and prints JSON with wall-clock p50/p95/max timings. Wall-clock timing includes executable startup; `command_total_ms` is the in-process diagnostic total.
+`bun run timing` builds `dist/zdr`, runs `zdr debug-timing` repeatedly, and prints JSON with wall-clock p50/p95/max timings. Wall-clock timing includes executable startup; `command_total_ms` is the in-process diagnostic total. Use `zdr debug-provider-timing <query>` separately for live provider latency.
 
 Build the standalone executable:
 

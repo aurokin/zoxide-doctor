@@ -439,6 +439,7 @@ describe("main correction cache commands", () => {
     expect(script).toContain("debug-corrections");
     expect(script).toContain("debug-events");
     expect(script).toContain("debug-timing");
+    expect(script).toContain("debug-provider-timing");
     expect(script).toContain("prune-events");
     expect(script).toContain("forget");
   });
@@ -677,6 +678,86 @@ describe("main timing command", () => {
 
     expect(stdout).toEqual([]);
     expect(stderr).toEqual(["zdr: --budget-ms must be a positive number"]);
+  });
+
+  test("measures provider selection timing for a direct query", async () => {
+    const selected = join(tempDir, "agentscan");
+
+    expect(
+      await main(["debug-provider-timing", "ascan"], {
+        ...testDeps(),
+        loadZoxideEntries: async () => [
+          { path: selected, score: 10, rank: 1 },
+          { path: join(tempDir, "other"), score: 5, rank: 2 },
+        ],
+        selectCandidate: async ({ state, candidates, rejectedPaths }) => {
+          expect(state.shell).toBe("direct-query");
+          expect(state.query_argv).toEqual(["ascan"]);
+          expect(rejectedPaths).toEqual([]);
+          return selectionResult(candidates[0] ?? null, "selected", 0.8, providerUsage());
+        },
+      }),
+    ).toEqual({ code: 0 });
+
+    const payload = JSON.parse(stdout.join("\n")) as TimingPayload;
+    expect(payload.command).toBe("debug-provider-timing");
+    expect(payload.measurements.map((measurement) => measurement.name)).toEqual(["provider-context", "provider-selection"]);
+    expect(payload.measurements.find((measurement) => measurement.name === "provider-context")).toMatchObject({
+      ok: true,
+      metadata: {
+        query: "ascan",
+        mode: "direct-query",
+        zoxide_entry_count: 2,
+        candidate_count: 2,
+        rejected_path_count: 0,
+      },
+    });
+    expect(payload.measurements.find((measurement) => measurement.name === "provider-selection")).toMatchObject({
+      ok: true,
+      metadata: {
+        selected_candidate_id: "c001",
+        selected_path: selected,
+        confidence: 0.8,
+        provider_usage: {
+          input_tokens: 100,
+          cost_total: 0.0036,
+        },
+      },
+    });
+    expect(stderr).toEqual([]);
+  });
+
+  test("measures provider selection timing for recorded recovery context", async () => {
+    const selected = join(tempDir, "agentscan");
+    await recordFinishedZAttempt("provider-timing-1", join(tempDir, "wrong"), ["ascan"]);
+
+    expect(
+      await main(["debug-provider-timing"], {
+        ...testDeps(),
+        loadZoxideEntries: async () => [{ path: selected, score: 10, rank: 1 }],
+        selectCandidate: async ({ state, candidates }) => {
+          expect(state.query_argv).toEqual(["ascan"]);
+          return selectionResult(candidates[0] ?? null);
+        },
+      }),
+    ).toEqual({ code: 0 });
+
+    const payload = JSON.parse(stdout.join("\n")) as TimingPayload;
+    expect(payload.measurements.find((measurement) => measurement.name === "provider-context")).toMatchObject({
+      ok: true,
+      metadata: {
+        query: "ascan",
+        mode: "recovery",
+      },
+    });
+    expect(payload.measurements.find((measurement) => measurement.name === "provider-selection")?.ok).toBe(true);
+  });
+
+  test("rejects provider timing options", async () => {
+    expect(await main(["debug-provider-timing", "--live"], testDeps())).toEqual({ code: 2 });
+
+    expect(stdout).toEqual([]);
+    expect(stderr).toEqual(["zdr: unknown debug-provider-timing option: --live"]);
   });
 });
 
@@ -1059,7 +1140,7 @@ function providerUsage() {
 
 type TimingPayload = {
   schema_version: 1;
-  command: "debug-timing";
+  command: "debug-timing" | "debug-provider-timing";
   total_duration_ms: number;
   budget_ms?: number;
   within_budget?: boolean;
