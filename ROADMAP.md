@@ -2,7 +2,7 @@
 
 ## Current Status
 
-Status: v0.3 implementation in progress.
+Status: v0.3 implemented; v0.4 is next.
 
 The project currently has the v0.1 core recovery loop plus v0.2 direct-query correction memory in place. The core decisions are locked:
 
@@ -73,7 +73,7 @@ Exit criteria:
 
 Goal: make bad repairs recoverable without leaving the flow.
 
-Status: implemented, pending docs/review polish.
+Status: implemented.
 
 Features:
 
@@ -129,7 +129,7 @@ Exit criteria:
 
 ## Near-Term Implementation Tasks
 
-1. Document install and shell initialization flow.
-2. Add manual correction-cache inspection/removal commands.
-3. Measure cold start for local-only, cache-hit, context-gathering, and network paths.
-4. Decide whether v0.3 picker fallback needs `fd`/`fzf` dependency checks or bundled alternatives.
+1. Add local JSONL telemetry for recovery, direct-query, cache, picker, and provider outcomes.
+2. Add a way to inspect or disable local telemetry.
+3. Capture provider usage/cost/cache fields when Pi exposes them.
+4. Measure and document provider-backed recovery latency separately from local timing.

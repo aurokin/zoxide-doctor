@@ -7,6 +7,7 @@ The intended workflow is:
 1. Run `z <query>` as usual.
 2. If zoxide lands in the wrong directory, run `zdr`.
 3. If the repair is wrong, run `zdr` again to escalate.
+4. If the second repair is wrong, run `zdr` again to open the picker fallback.
 
 Direct lookup with `zdr <query>` is available as an experimental shortcut, but the primary product is no-arg `zdr` after a bad `z` jump.
 
