@@ -89,7 +89,18 @@ describe("runPicker", () => {
     expect(commands).toEqual([
       {
         command: "fzf",
-        args: ["--query", "ascan"],
+        args: [
+          "--query",
+          "ascan",
+          "--prompt",
+          "zdr> ",
+          "--header",
+          "Select a directory for Zoxide Doctor recovery",
+          "--height",
+          "40%",
+          "--layout",
+          "reverse",
+        ],
         stdin: "/repo/agentscan\n/repo/agentchat\n",
       },
     ]);
@@ -110,7 +121,7 @@ describe("runPicker", () => {
           runCommand: async (input): Promise<CommandOutput> => {
             commands.push(input);
             if (input.command === "fd") {
-              return { code: 0, stdout: "/repo/agentchat\n/repo/agentscan\n", stderr: "" };
+              return { code: 0, stdout: "/repo/agentchat/\n/repo/agentscan/\n", stderr: "" };
             }
             return { code: 0, stdout: "/repo/agentchat\n", stderr: "" };
           },
@@ -121,11 +132,34 @@ describe("runPicker", () => {
     expect(commands).toEqual([
       {
         command: "fd",
-        args: ["--type", "d", "--hidden", "--color", "never", ".", "/repo"],
+        args: [
+          "--type",
+          "d",
+          "--hidden",
+          "--color",
+          "never",
+          "--max-depth",
+          "4",
+          "--max-results",
+          "200",
+          ".",
+          "/repo",
+        ],
       },
       {
         command: "fzf",
-        args: ["--query", "ascan"],
+        args: [
+          "--query",
+          "ascan",
+          "--prompt",
+          "zdr> ",
+          "--header",
+          "Select a directory for Zoxide Doctor recovery",
+          "--height",
+          "40%",
+          "--layout",
+          "reverse",
+        ],
         stdin: "/repo/agentscan\n/repo/agentchat\n",
       },
     ]);

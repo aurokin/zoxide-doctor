@@ -267,6 +267,7 @@ zdr prune-events --max-events 1000
 
 - zsh, bash, and fish are supported.
 - Third-attempt picker fallback requires `fzf`; `fd` is optional and adds bounded local directory scan results when available.
+- Picker `fd` scans are depth-limited and result-limited before results are sent to `fzf`; zoxide-ranked paths stay first.
 - Provider-backed paths require `OPENROUTER_API_KEY`.
 - Correction memory is separate from zoxide and does not change zoxide frecency scores.
 

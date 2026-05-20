@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { normalize as normalizePath } from "node:path";
 import type { ZoxideEntry } from "./zoxide.js";
 
 export type PickerResult =
@@ -12,6 +13,7 @@ export type PickerInput = {
   rejectedPaths?: string[];
   scanRoots?: string[];
   maxFdResults?: number;
+  maxFdDepth?: number;
 };
 
 export type CommandOutput = {
@@ -26,6 +28,7 @@ export type PickerDeps = {
 };
 
 const DEFAULT_MAX_FD_RESULTS = 200;
+const DEFAULT_MAX_FD_DEPTH = 4;
 
 export async function runPicker(input: PickerInput, deps: PickerDeps = {}): Promise<PickerResult> {
   const runCommand = deps.runCommand ?? runSystemCommand;
@@ -37,7 +40,12 @@ export async function runPicker(input: PickerInput, deps: PickerDeps = {}): Prom
 
   const fdPaths =
     input.scanRoots && input.scanRoots.length > 0 && (await isCommandAvailable("fd"))
-      ? await loadFdPaths(input.scanRoots, input.maxFdResults ?? DEFAULT_MAX_FD_RESULTS, runCommand)
+      ? await loadFdPaths(
+          input.scanRoots,
+          input.maxFdResults ?? DEFAULT_MAX_FD_RESULTS,
+          runCommand,
+          input.maxFdDepth ?? DEFAULT_MAX_FD_DEPTH,
+        )
       : [];
   const paths = buildPickerPaths({
     zoxideEntries: input.zoxideEntries,
@@ -50,7 +58,18 @@ export async function runPicker(input: PickerInput, deps: PickerDeps = {}): Prom
 
   const output = await runCommand({
     command: "fzf",
-    args: ["--query", input.query],
+    args: [
+      "--query",
+      input.query,
+      "--prompt",
+      "zdr> ",
+      "--header",
+      "Select a directory for Zoxide Doctor recovery",
+      "--height",
+      "40%",
+      "--layout",
+      "reverse",
+    ],
     stdin: `${paths.join("\n")}\n`,
   });
   const selected = output.stdout.split(/\r?\n/).find((line) => line.length > 0);
@@ -87,10 +106,23 @@ async function loadFdPaths(
   scanRoots: string[],
   maxResults: number,
   runCommand: NonNullable<PickerDeps["runCommand"]>,
+  maxDepth = DEFAULT_MAX_FD_DEPTH,
 ): Promise<string[]> {
   const output = await runCommand({
     command: "fd",
-    args: ["--type", "d", "--hidden", "--color", "never", ".", ...scanRoots],
+    args: [
+      "--type",
+      "d",
+      "--hidden",
+      "--color",
+      "never",
+      "--max-depth",
+      String(maxDepth),
+      "--max-results",
+      String(maxResults),
+      ".",
+      ...scanRoots,
+    ],
   });
   if (output.code !== 0) {
     return [];
@@ -98,7 +130,13 @@ async function loadFdPaths(
   return output.stdout
     .split(/\r?\n/)
     .filter((path) => path.length > 0)
+    .map(normalizeDirectoryPath)
     .slice(0, maxResults);
+}
+
+function normalizeDirectoryPath(path: string): string {
+  const normalized = normalizePath(path);
+  return normalized.length > 1 ? normalized.replace(/[\\/]+$/, "") : normalized;
 }
 
 async function commandAvailable(
