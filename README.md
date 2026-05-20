@@ -133,9 +133,11 @@ Inspect local telemetry:
 ```bash
 zdr debug-events
 zdr debug-events --limit 20
+zdr prune-events --max-events 1000
 ```
 
 `debug-events` prints the local JSONL telemetry log as a JSON array. It skips malformed JSONL records instead of failing the whole read.
+`prune-events` rewrites the local log to keep only the newest valid events and reports how many valid and invalid records were removed.
 
 ## Limits
 

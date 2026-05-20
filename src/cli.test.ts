@@ -13,7 +13,7 @@ import {
   type CorrectionEntry,
 } from "./corrections.js";
 import type { PickerInput, PickerResult } from "./picker.js";
-import type { TelemetryEvent, TelemetryInput } from "./telemetry.js";
+import type { TelemetryEvent, TelemetryInput, TelemetryPruneResult } from "./telemetry.js";
 
 let previousXdgCacheHome: string | undefined;
 let previousXdgStateHome: string | undefined;
@@ -405,6 +405,7 @@ describe("main correction cache commands", () => {
     expect(script).toContain("debug-corrections");
     expect(script).toContain("debug-events");
     expect(script).toContain("debug-timing");
+    expect(script).toContain("prune-events");
     expect(script).toContain("forget");
   });
 });
@@ -479,6 +480,85 @@ describe("main telemetry commands", () => {
 
     expect(stdout).toEqual([]);
     expect(stderr).toEqual(["zdr: --limit must be a positive integer"]);
+  });
+
+  test("prunes telemetry events", async () => {
+    let maxEvents: number | undefined;
+
+    expect(
+      await main(
+        ["prune-events", "--max-events", "25"],
+        testDeps({
+          pruneTelemetryEvents: async (input) => {
+            maxEvents = input.maxEvents;
+            return {
+              kept: 25,
+              pruned: 4,
+              dropped_invalid: 1,
+            };
+          },
+        }),
+      ),
+    ).toEqual({ code: 0 });
+
+    expect(maxEvents).toBe(25);
+    expect(JSON.parse(stdout.join("\n"))).toEqual({
+      kept: 25,
+      pruned: 4,
+      dropped_invalid: 1,
+    });
+    expect(stderr).toEqual([]);
+  });
+
+  test("supports pruning telemetry to zero events", async () => {
+    let maxEvents: number | undefined;
+
+    expect(
+      await main(
+        ["prune-events", "--max-events=0"],
+        testDeps({
+          pruneTelemetryEvents: async (input) => {
+            maxEvents = input.maxEvents;
+            return {
+              kept: 0,
+              pruned: 3,
+              dropped_invalid: 0,
+            };
+          },
+        }),
+      ),
+    ).toEqual({ code: 0 });
+
+    expect(maxEvents).toBe(0);
+  });
+
+  test("requires a telemetry prune limit", async () => {
+    expect(await main(["prune-events"], testDeps())).toEqual({ code: 2 });
+
+    expect(stdout).toEqual([]);
+    expect(stderr).toEqual(["zdr: prune-events requires --max-events <count>"]);
+  });
+
+  test("rejects invalid telemetry prune limit", async () => {
+    expect(await main(["prune-events", "--max-events", "-1"], testDeps())).toEqual({ code: 2 });
+
+    expect(stdout).toEqual([]);
+    expect(stderr).toEqual(["zdr: --max-events must be a non-negative integer"]);
+  });
+
+  test("rejects empty telemetry prune equals value", async () => {
+    expect(await main(["prune-events", "--max-events="], testDeps())).toEqual({ code: 2 });
+
+    expect(stdout).toEqual([]);
+    expect(stderr).toEqual(["zdr: --max-events requires a value"]);
+  });
+
+  test("rejects whitespace-only telemetry prune values", async () => {
+    expect(await main(["prune-events", "--max-events", " "], testDeps())).toEqual({ code: 2 });
+    expect(await main(["prune-events", "--max-events= "], testDeps())).toEqual({ code: 2 });
+
+    expect(stdout).toEqual([]);
+    expect(stderr).toEqual(["zdr: --max-events requires a value", "zdr: --max-events requires a value"]);
   });
 });
 
@@ -846,6 +926,7 @@ function testDeps(
     runPicker?: RunPicker;
     appendTelemetryEvent?: AppendTelemetryEvent;
     readTelemetryEvents?: ReadTelemetryEvents;
+    pruneTelemetryEvents?: PruneTelemetryEvents;
   } = {},
 ) {
   return {
@@ -865,6 +946,13 @@ function testDeps(
         },
     appendTelemetryEvent: input.appendTelemetryEvent ?? (async () => {}),
     readTelemetryEvents: input.readTelemetryEvents ?? (async () => []),
+    pruneTelemetryEvents:
+      input.pruneTelemetryEvents ??
+      (async () => ({
+        kept: 0,
+        pruned: 0,
+        dropped_invalid: 0,
+      })),
     cwd: () => tempDir,
     now: () => new Date("2026-05-18T00:00:00.000Z"),
   };
@@ -903,6 +991,7 @@ type StoreCorrection = (input: { query: string; path: string; now?: Date }) => P
 type RunPicker = (input: PickerInput) => Promise<PickerResult>;
 type AppendTelemetryEvent = (input: TelemetryInput) => Promise<unknown>;
 type ReadTelemetryEvents = (input?: { limit?: number }) => Promise<TelemetryEvent[]>;
+type PruneTelemetryEvents = (input: { maxEvents: number }) => Promise<TelemetryPruneResult>;
 
 function selectionResult(candidate: Candidate | null, reason = "selected", confidence = candidate ? 0.8 : 0) {
   return {

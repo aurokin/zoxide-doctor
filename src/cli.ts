@@ -25,7 +25,14 @@ import {
 import { loadZoxideEntries, type ZoxideEntry } from "./zoxide.js";
 import type { PickerInput, PickerResult } from "./picker.js";
 import type { SelectionResult } from "./provider/select.js";
-import { appendTelemetryEvent, readTelemetryEvents, type TelemetryEvent, type TelemetryInput } from "./telemetry.js";
+import {
+  appendTelemetryEvent,
+  pruneTelemetryEvents,
+  readTelemetryEvents,
+  type TelemetryEvent,
+  type TelemetryInput,
+  type TelemetryPruneResult,
+} from "./telemetry.js";
 
 type CommandResult = {
   code: number;
@@ -46,6 +53,7 @@ type CliDeps = {
   runPicker: (input: PickerInput) => Promise<PickerResult>;
   appendTelemetryEvent: (input: TelemetryInput) => Promise<unknown>;
   readTelemetryEvents: (input?: { limit?: number }) => Promise<TelemetryEvent[]>;
+  pruneTelemetryEvents: (input: { maxEvents: number }) => Promise<TelemetryPruneResult>;
   cwd: () => string;
   now: () => Date;
 };
@@ -91,6 +99,8 @@ export async function main(argv: string[], deps: CliDeps = defaultDeps): Promise
       return debugEventsCommand(args, deps);
     case "debug-timing":
       return debugTimingCommand(args, deps);
+    case "prune-events":
+      return pruneEventsCommand(args, deps);
     case "forget":
       return forgetCommand(args);
     case "provider-smoke":
@@ -119,6 +129,7 @@ const defaultDeps: CliDeps = {
   },
   appendTelemetryEvent,
   readTelemetryEvents,
+  pruneTelemetryEvents,
   cwd: () => process.cwd(),
   now: () => new Date(),
 };
@@ -320,6 +331,66 @@ function parseDebugEventsArgs(args: string[]): DebugEventsArgs {
   }
 
   return limit === undefined ? { ok: true } : { ok: true, limit };
+}
+
+async function pruneEventsCommand(args: string[], deps: CliDeps): Promise<CommandResult> {
+  const parsed = parsePruneEventsArgs(args);
+  if (!parsed.ok) {
+    console.error(`zdr: ${parsed.error}`);
+    return { code: 2 };
+  }
+
+  try {
+    console.log(JSON.stringify(await deps.pruneTelemetryEvents({ maxEvents: parsed.maxEvents }), null, 2));
+    return { code: 0 };
+  } catch (error) {
+    console.error(`zdr: ${error instanceof Error ? error.message : String(error)}`);
+    return { code: 1 };
+  }
+}
+
+type PruneEventsArgs = { ok: true; maxEvents: number } | { ok: false; error: string };
+
+function parsePruneEventsArgs(args: string[]): PruneEventsArgs {
+  let maxEvents: number | undefined;
+
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+    if (!arg) {
+      return { ok: false, error: "unexpected missing argument" };
+    }
+    if (arg === "--max-events") {
+      const value = args[index + 1];
+      if (!value || value.trim().length === 0) {
+        return { ok: false, error: "--max-events requires a value" };
+      }
+      const parsed = Number(value);
+      if (!Number.isInteger(parsed) || parsed < 0) {
+        return { ok: false, error: "--max-events must be a non-negative integer" };
+      }
+      maxEvents = parsed;
+      index += 1;
+      continue;
+    }
+    if (arg.startsWith("--max-events=")) {
+      const value = arg.slice("--max-events=".length);
+      if (!value || value.trim().length === 0) {
+        return { ok: false, error: "--max-events requires a value" };
+      }
+      const parsed = Number(value);
+      if (!Number.isInteger(parsed) || parsed < 0) {
+        return { ok: false, error: "--max-events must be a non-negative integer" };
+      }
+      maxEvents = parsed;
+      continue;
+    }
+    return { ok: false, error: `unknown prune-events argument: ${arg}` };
+  }
+
+  if (maxEvents === undefined) {
+    return { ok: false, error: "prune-events requires --max-events <count>" };
+  }
+  return { ok: true, maxEvents };
 }
 
 async function forgetCommand(args: string[]): Promise<CommandResult> {
@@ -946,6 +1017,8 @@ Usage:
                       Measure local timing paths as JSON
   zdr debug-timing [query] --budget-ms <ms>
                       Include local timing budget status in JSON
+  zdr prune-events --max-events <count>
+                      Keep only the newest local telemetry events
   zdr forget <query> Remove one exact direct-query correction
   zdr provider-smoke  Verify Pi/OpenRouter import and model lookup
   zdr provider-smoke --live
@@ -981,7 +1054,7 @@ function zshInitScript(): string {
     "",
     "zdr() {",
     "  case \"$1\" in",
-    "    init|record-z|finish-z|clear-recovery-retry|debug-state|debug-candidates|debug-select|debug-corrections|debug-events|debug-timing|forget|provider-smoke|--*|-*)",
+    "    init|record-z|finish-z|clear-recovery-retry|debug-state|debug-candidates|debug-select|debug-corrections|debug-events|debug-timing|prune-events|forget|provider-smoke|--*|-*)",
     "      command zdr \"$@\"",
     "      return $?",
     "      ;;",
