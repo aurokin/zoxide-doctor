@@ -1380,7 +1380,7 @@ function fishInitScript(): string {
     "    end",
     "",
     "    function z",
-    '        set -l __zdr_attempt "fish-$fish_pid-(date +%s%N)-(random)"',
+    "        set -l __zdr_attempt fish-$fish_pid-(date +%s%N)-(random)",
     "        set __zdr_attempt (string replace --regex --all '[^A-Za-z0-9_.-]' '_' -- $__zdr_attempt)",
     '        set -l __zdr_before "$PWD"',
     '        command zdr record-z --attempt "$__zdr_attempt" --before "$__zdr_before" --shell fish -- $argv',

@@ -550,6 +550,7 @@ describe("main correction cache commands", () => {
     const script = stdout.join("\n");
     expect(script).toContain("zoxide-doctor fish integration");
     expect(script).toContain("functions --copy z __zdr_original_z");
+    expect(script).toContain("set -l __zdr_attempt fish-$fish_pid-(date +%s%N)-(random)");
     expect(script).toContain("--shell fish");
     expect(script).toContain("function zdr");
     expect(script).toContain("command zdr $argv");
@@ -558,6 +559,62 @@ describe("main correction cache commands", () => {
     expect(script).toContain("case zdr");
     expect(script).toContain("debug-config");
     expect(script).toContain("provider-smoke");
+  });
+
+  test("fish init records z attempts with runtime attempt IDs when fish is available", () => {
+    const result = Bun.spawnSync({
+      cmd: [
+        "bash",
+        "-lc",
+        String.raw`
+          command -v fish >/dev/null || { echo "fish unavailable"; exit 0; }
+          tmp=$(mktemp -d)
+          mkdir -p "$tmp/bin" "$tmp/home" "$tmp/target"
+          cat > "$tmp/bin/zdr" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$ZDR_LOG"
+case "$1" in
+  record-z|finish-z|clear-recovery-retry|debug-state|debug-candidates|debug-select|debug-corrections|debug-config|debug-events|debug-timing|debug-provider-timing|prune-events|forget|provider-smoke|init|--*|-*)
+    exit 0
+    ;;
+esac
+printf '%s\n' "$ZDR_TARGET"
+EOF
+          chmod +x "$tmp/bin/zdr"
+          PATH="$tmp/bin:$PATH" ZDR_LOG="$tmp/log" ZDR_TARGET="$tmp/target" HOME="$tmp/home" fish --no-config -c '
+            function z
+              cd $ZDR_TARGET
+            end
+            bun run --silent src/cli.ts init fish | source
+            cd $HOME
+            z ascan
+            test "$PWD" = "$ZDR_TARGET"; or exit 11
+            cd $HOME
+            zdr
+            test "$PWD" = "$ZDR_TARGET"; or exit 12
+          '
+          status=$?
+          echo "fish smoke ran"
+          cat "$tmp/log"
+          rm -rf "$tmp"
+          exit "$status"
+        `,
+      ],
+      cwd: process.cwd(),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    expect(result.exitCode).toBe(0);
+    const output = result.stdout.toString();
+    if (output.includes("fish unavailable")) {
+      return;
+    }
+    expect(output).toContain("fish smoke ran");
+    expect(output).not.toContain("_date___s_N_-_random_");
+    expect(output).toContain("record-z --attempt fish-");
+    expect(output).toContain("--shell fish -- ascan");
+    expect(output).toContain("finish-z --attempt fish-");
   });
 
   test("rejects unsupported init shells", async () => {
