@@ -1,5 +1,6 @@
 import { access, mkdir, readFile, rename, stat, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { withFileLock } from "./file-lock.js";
 
 export type CorrectionEntry = {
   path: string;
@@ -42,29 +43,35 @@ export async function readCorrectionCache(): Promise<CorrectionCache> {
 }
 
 export async function writeCorrectionCache(cache: CorrectionCache): Promise<void> {
-  await writeJsonAtomic(getCachePaths().corrections, cache);
+  const path = getCachePaths().corrections;
+  await withFileLock(path, async () => {
+    await writeJsonAtomic(path, cache);
+  });
 }
 
 export async function lookupCorrection(query: string): Promise<CorrectionLookup> {
-  const cache = await readCorrectionCache();
-  const entry = cache[query];
-  if (!entry) {
-    return { status: "miss", query };
-  }
+  const path = getCachePaths().corrections;
+  return withFileLock(path, async () => {
+    const cache = await readCorrectionCache();
+    const entry = cache[query];
+    if (!entry) {
+      return { status: "miss", query };
+    }
 
-  if (!(await pathExists(entry.path))) {
-    delete cache[query];
-    await writeCorrectionCache(cache);
-    return { status: "stale", query, stalePath: entry.path };
-  }
+    if (!(await pathExists(entry.path))) {
+      delete cache[query];
+      await writeJsonAtomic(path, cache);
+      return { status: "stale", query, stalePath: entry.path };
+    }
 
-  const updated = {
-    ...entry,
-    hits: entry.hits + 1,
-  };
-  cache[query] = updated;
-  await writeCorrectionCache(cache);
-  return { status: "hit", query, entry: updated };
+    const updated = {
+      ...entry,
+      hits: entry.hits + 1,
+    };
+    cache[query] = updated;
+    await writeJsonAtomic(path, cache);
+    return { status: "hit", query, entry: updated };
+  });
 }
 
 export async function inspectCorrection(query: string): Promise<CorrectionInspection> {
@@ -85,27 +92,33 @@ export async function storeCorrection(input: {
   now?: Date;
 }): Promise<CorrectionEntry> {
   await assertExistingPath(input.path);
-  const cache = await readCorrectionCache();
-  const existing = cache[input.query];
-  const unchangedTarget = existing?.path === input.path;
-  const entry: CorrectionEntry = {
-    path: input.path,
-    first_resolved: unchangedTarget && existing ? existing.first_resolved : (input.now ?? new Date()).toISOString(),
-    hits: unchangedTarget && existing ? existing.hits : 0,
-  };
-  cache[input.query] = entry;
-  await writeCorrectionCache(cache);
-  return entry;
+  const correctionsPath = getCachePaths().corrections;
+  return withFileLock(correctionsPath, async () => {
+    const cache = await readCorrectionCache();
+    const existing = cache[input.query];
+    const unchangedTarget = existing?.path === input.path;
+    const entry: CorrectionEntry = {
+      path: input.path,
+      first_resolved: unchangedTarget && existing ? existing.first_resolved : (input.now ?? new Date()).toISOString(),
+      hits: unchangedTarget && existing ? existing.hits : 0,
+    };
+    cache[input.query] = entry;
+    await writeJsonAtomic(correctionsPath, cache);
+    return entry;
+  });
 }
 
 export async function forgetCorrection(query: string): Promise<boolean> {
-  const cache = await readCorrectionCache();
-  if (!cache[query]) {
-    return false;
-  }
-  delete cache[query];
-  await writeCorrectionCache(cache);
-  return true;
+  const path = getCachePaths().corrections;
+  return withFileLock(path, async () => {
+    const cache = await readCorrectionCache();
+    if (!cache[query]) {
+      return false;
+    }
+    delete cache[query];
+    await writeJsonAtomic(path, cache);
+    return true;
+  });
 }
 
 async function readJson<T>(path: string): Promise<T | null> {

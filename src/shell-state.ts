@@ -1,5 +1,6 @@
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { withFileLock } from "./file-lock.js";
 
 export type PendingZState = {
   schema_version: 1;
@@ -132,23 +133,31 @@ export async function writeRecoveryRetry(input: {
   rejectedPath: string;
   existing?: RecoveryRetryState | null;
 }): Promise<RecoveryRetryState> {
-  const rejected = new Set(input.existing?.rejected_paths ?? []);
-  rejected.add(input.rejectedPath);
-  const retry: RecoveryRetryState = {
-    schema_version: 1,
-    status: "recovery_retry",
-    z_attempt_id: input.state.attempt_id,
-    query_argv: input.state.query_argv,
-    wrong_landing_path: input.state.after_pwd,
-    rejected_paths: Array.from(rejected),
-    updated_at: new Date().toISOString(),
-  };
-  await writeJsonAtomic(getStatePaths().recoveryRetry, retry);
-  return retry;
+  const path = getStatePaths().recoveryRetry;
+  return withFileLock(path, async () => {
+    const current = await readRecoveryRetryState();
+    const base = retryMatchesAttempt(current, input.state) ? current : input.existing;
+    const rejected = new Set(base?.rejected_paths ?? []);
+    rejected.add(input.rejectedPath);
+    const retry: RecoveryRetryState = {
+      schema_version: 1,
+      status: "recovery_retry",
+      z_attempt_id: input.state.attempt_id,
+      query_argv: input.state.query_argv,
+      wrong_landing_path: input.state.after_pwd,
+      rejected_paths: Array.from(rejected),
+      updated_at: new Date().toISOString(),
+    };
+    await writeJsonAtomic(path, retry);
+    return retry;
+  });
 }
 
 export async function clearRecoveryRetry(): Promise<void> {
-  await rm(getStatePaths().recoveryRetry, { force: true });
+  const path = getStatePaths().recoveryRetry;
+  await withFileLock(path, async () => {
+    await rm(path, { force: true });
+  });
 }
 
 async function readJson<T>(path: string): Promise<T | null> {
@@ -189,6 +198,10 @@ function detectShell(): string {
 
 function arrayEquals(a: string[], b: string[]): boolean {
   return a.length === b.length && a.every((value, index) => value === b[index]);
+}
+
+function retryMatchesAttempt(retry: RecoveryRetryState | null, state: FinishedZState): retry is RecoveryRetryState {
+  return !!retry && retry.z_attempt_id === state.attempt_id && arrayEquals(retry.query_argv, state.query_argv);
 }
 
 function homeDir(env: NodeJS.ProcessEnv): string {

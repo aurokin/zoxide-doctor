@@ -129,13 +129,12 @@ Exit criteria:
 
 ## Remaining Hardening Tasks
 
-1. Add state/cache locking for correction memory and recovery retry files.
-2. Expand zsh and bash runtime shell tests to match fish coverage.
-3. Make retry-state preservation robust for `zdr` invocations with shell syntax variation.
-4. Add bounded local directory scan candidates before model selection when zoxide candidates are weak.
-5. Add real second-attempt model reasoning controls when Pi/provider support is available.
-6. Tighten config validation and document supported behavior knobs.
-7. Polish picker UX and docs.
+1. Expand zsh and bash runtime shell tests to match fish coverage.
+2. Make retry-state preservation robust for `zdr` invocations with shell syntax variation.
+3. Add bounded local directory scan candidates before model selection when zoxide candidates are weak.
+4. Add real second-attempt model reasoning controls when Pi/provider support is available.
+5. Tighten config validation and document supported behavior knobs.
+6. Polish picker UX and docs.
 
 ## Remaining Packaging Tasks
 

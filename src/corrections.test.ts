@@ -69,6 +69,21 @@ describe("correction cache", () => {
     });
   });
 
+  test("serializes concurrent cache hit increments", async () => {
+    const target = join(tempDir, "agentscan");
+    await mkdir(target);
+    await storeCorrection({
+      query: "ascan",
+      path: target,
+      now: new Date("2026-05-18T00:00:00.000Z"),
+    });
+
+    const lookups = await Promise.all(Array.from({ length: 20 }, () => lookupCorrection("ascan")));
+
+    expect(lookups.every((lookup) => lookup.status === "hit")).toBe(true);
+    expect((await readCorrectionCache()).ascan?.hits).toBe(20);
+  });
+
   test("evicts stale paths on lookup", async () => {
     await writeCorrectionCache({
       ascan: {

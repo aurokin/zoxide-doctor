@@ -65,6 +65,22 @@ describe("recovery retry state", () => {
     });
   });
 
+  test("merges concurrent rejected recovery paths", async () => {
+    await Promise.all([
+      writeRecoveryRetry({
+        state,
+        rejectedPath: "/Users/auro/code/first",
+      }),
+      writeRecoveryRetry({
+        state,
+        rejectedPath: "/Users/auro/code/second",
+      }),
+    ]);
+
+    const retry = await readRecoveryRetryForAttempt(state);
+    expect([...(retry?.rejected_paths ?? [])].sort()).toEqual(["/Users/auro/code/first", "/Users/auro/code/second"]);
+  });
+
   test("ignores retry state for a different z attempt", async () => {
     await writeRecoveryRetry({
       state,
