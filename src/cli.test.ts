@@ -510,6 +510,46 @@ describe("main correction cache commands", () => {
     expect(script).toContain("prune-events");
     expect(script).toContain("forget");
   });
+
+  test("bash init wraps z and navigation commands", async () => {
+    expect(await main(["init", "bash"])).toEqual({ code: 0 });
+
+    const script = stdout.join("\n");
+    expect(script).toContain("zoxide-doctor bash integration");
+    expect(script).toContain("__zdr_original_z");
+    expect(script).toContain("--shell bash");
+    expect(script).toContain("__zdr_clear_recovery_retry_file");
+    expect(script).not.toContain("trap __zdr_debug_trap DEBUG");
+    expect(script).toContain("local __zdr_status=$?");
+    expect(script).toContain("return $__zdr_status");
+    expect(script).toContain('PROMPT_COMMAND=(__zdr_prompt_command "${PROMPT_COMMAND[@]}")');
+    expect(script).toContain('PROMPT_COMMAND="__zdr_prompt_command${PROMPT_COMMAND:+;$PROMPT_COMMAND}"');
+    expect(script).toContain('case "$1" in');
+    expect(script).toContain("debug-config");
+    expect(script).toContain("provider-smoke");
+  });
+
+  test("bash init preserves function-style z definitions", () => {
+    const result = Bun.spawnSync({
+      cmd: [
+        "bash",
+        "-lc",
+        'function z() { :; }; eval "$(bun run --silent src/cli.ts init bash)"; declare -F __zdr_original_z >/dev/null',
+      ],
+      cwd: process.cwd(),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    expect(result.exitCode).toBe(0);
+  });
+
+  test("rejects unsupported init shells", async () => {
+    expect(await main(["init", "fish"])).toEqual({ code: 2 });
+
+    expect(stdout).toEqual([]);
+    expect(stderr).toEqual(["zdr: supported shells: zsh, bash"]);
+  });
 });
 
 describe("main telemetry commands", () => {

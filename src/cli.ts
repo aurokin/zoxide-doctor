@@ -146,13 +146,17 @@ const defaultDeps: CliDeps = {
 
 function initCommand(args: string[]): CommandResult {
   const [shell] = args;
-  if (shell !== "zsh") {
-    console.error("zdr: only `zdr init zsh` is scaffolded right now");
-    return { code: 2 };
+  switch (shell) {
+    case "zsh":
+      console.log(zshInitScript());
+      return { code: 0 };
+    case "bash":
+      console.log(bashInitScript());
+      return { code: 0 };
+    default:
+      console.error("zdr: supported shells: zsh, bash");
+      return { code: 2 };
   }
-
-  console.log(zshInitScript());
-  return { code: 0 };
 }
 
 async function recordZCommand(args: string[]): Promise<CommandResult> {
@@ -1260,6 +1264,93 @@ function zshInitScript(): string {
     "",
     'if [[ -z "${preexec_functions[(r)_zdr_preexec]}" ]]; then',
     "  preexec_functions+=(_zdr_preexec)",
+    "fi",
+  ].join("\n");
+}
+
+function bashInitScript(): string {
+  return [
+    "# zoxide-doctor bash integration",
+    "#",
+    "# Source this after zoxide has initialized its z function.",
+    "",
+    "__zdr_clear_recovery_retry_file() {",
+    '  local __zdr_retry="${XDG_STATE_HOME:-$HOME/.local/state}/zdr/recovery_retry.json"',
+    '  [ -e "$__zdr_retry" ] && rm -f "$__zdr_retry"',
+    "}",
+    "",
+    "if ! declare -F z >/dev/null 2>&1; then",
+    '  echo "zdr: zoxide function \'z\' is not defined; run zoxide init before zdr init" >&2',
+    "else",
+    "  if ! declare -F __zdr_original_z >/dev/null 2>&1; then",
+    "    eval \"$(declare -f z | sed -E '1{s/^z[[:space:]]*\\(\\)/__zdr_original_z()/;s/^function[[:space:]]+z[[:space:]]*\\(\\)/function __zdr_original_z()/;}')\"",
+    "  fi",
+    "",
+    "  z() {",
+    '    local __zdr_pid="${BASHPID:-$$}"',
+    '    local __zdr_attempt="bash-${__zdr_pid}-${SECONDS}-${RANDOM}"',
+    '    __zdr_attempt="${__zdr_attempt//[^A-Za-z0-9_.-]/_}"',
+    '    local __zdr_before="$PWD"',
+    '    command zdr record-z --attempt "$__zdr_attempt" --before "$__zdr_before" --shell bash -- "$@"',
+    '    __zdr_original_z "$@"',
+    "    local __zdr_status=$?",
+    '    command zdr finish-z --attempt "$__zdr_attempt" --after "$PWD" --status "$__zdr_status"',
+    '    return "$__zdr_status"',
+    "  }",
+    "fi",
+    "",
+    "zdr() {",
+    "  __zdr_inside_zdr=1",
+    "  case \"$1\" in",
+    "    init|record-z|finish-z|clear-recovery-retry|debug-state|debug-candidates|debug-select|debug-corrections|debug-config|debug-events|debug-timing|debug-provider-timing|prune-events|forget|provider-smoke|--*|-*)",
+    "      command zdr \"$@\"",
+    "      local __zdr_status=$?",
+    "      __zdr_last_command=\"zdr-other\"",
+    "      __zdr_inside_zdr=0",
+    "      return $__zdr_status",
+    "      ;;",
+    "  esac",
+    "",
+    '  if [ "$#" -gt 0 ]; then',
+    "    __zdr_clear_recovery_retry_file",
+    "  fi",
+    "",
+    "  local __zdr_target",
+    '  __zdr_target=$(command zdr "$@")',
+    "  local __zdr_status=$?",
+    '  if [ "$#" -eq 0 ]; then',
+    '    __zdr_last_command="zdr"',
+    "  else",
+    '    __zdr_last_command="zdr-other"',
+    "  fi",
+    "  __zdr_inside_zdr=0",
+    '  if [ $__zdr_status -eq 0 ] && [ -n "$__zdr_target" ]; then',
+    '    cd "$__zdr_target"',
+    "    return $?",
+    "  fi",
+    "  return $__zdr_status",
+    "}",
+    "",
+    "__zdr_prompt_command() {",
+    "  local __zdr_status=$?",
+    '  case "${__zdr_last_command:-}" in',
+    "    zdr) ;;",
+    "    *) __zdr_clear_recovery_retry_file ;;",
+    "  esac",
+    "  __zdr_last_command=",
+    "  return $__zdr_status",
+    "}",
+    "",
+    "if declare -p PROMPT_COMMAND 2>/dev/null | grep -q '^declare -a'; then",
+    '  case " ${PROMPT_COMMAND[*]} " in',
+    "    *' __zdr_prompt_command '*) ;;",
+    "    *) PROMPT_COMMAND=(__zdr_prompt_command \"${PROMPT_COMMAND[@]}\") ;;",
+    "  esac",
+    "else",
+    '  case ";${PROMPT_COMMAND:-};" in',
+    "    *';__zdr_prompt_command;'*) ;;",
+    "    *) PROMPT_COMMAND=\"__zdr_prompt_command${PROMPT_COMMAND:+;$PROMPT_COMMAND}\" ;;",
+    "  esac",
     "fi",
   ].join("\n");
 }

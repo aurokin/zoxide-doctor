@@ -28,7 +28,7 @@ Status: implemented.
 Features:
 
 - Bun TypeScript CLI.
-- zsh integration.
+- zsh and bash integration.
 - Shell wrapper records `z` attempts to `last_z.json`.
 - no-arg `zdr` repairs the last bad `z` jump.
 - Candidate builder from zoxide DB plus cheap lexical scoring.
@@ -129,6 +129,5 @@ Exit criteria:
 
 ## Near-Term Implementation Tasks
 
-1. Add bash shell integration.
-2. Add fish shell integration.
-3. Document provider/model configuration and install flow.
+1. Add fish shell integration.
+2. Document provider/model configuration and install flow.
