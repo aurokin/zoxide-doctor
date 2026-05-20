@@ -3,6 +3,7 @@
 import packageJson from "../package.json" with { type: "json" };
 import { dirname, parse } from "node:path";
 import { buildCandidates, type Candidate } from "./candidates.js";
+import { loadConfig, type LoadedConfig } from "./config.js";
 import {
   forgetCorrection,
   inspectCorrection,
@@ -55,6 +56,7 @@ type CliDeps = {
   appendTelemetryEvent: (input: TelemetryInput) => Promise<unknown>;
   readTelemetryEvents: (input?: { limit?: number }) => Promise<TelemetryEvent[]>;
   pruneTelemetryEvents: (input: { maxEvents: number }) => Promise<TelemetryPruneResult>;
+  loadConfig: () => Promise<LoadedConfig>;
   cwd: () => string;
   now: () => Date;
 };
@@ -96,6 +98,8 @@ export async function main(argv: string[], deps: CliDeps = defaultDeps): Promise
       return debugSelectCommand(args);
     case "debug-corrections":
       return debugCorrectionsCommand();
+    case "debug-config":
+      return debugConfigCommand(deps);
     case "debug-events":
       return debugEventsCommand(args, deps);
     case "debug-timing":
@@ -133,6 +137,7 @@ const defaultDeps: CliDeps = {
   appendTelemetryEvent,
   readTelemetryEvents,
   pruneTelemetryEvents,
+  loadConfig,
   cwd: () => process.cwd(),
   now: () => new Date(),
 };
@@ -275,6 +280,16 @@ async function debugSelectCommand(args: string[]): Promise<CommandResult> {
 async function debugCorrectionsCommand(): Promise<CommandResult> {
   try {
     console.log(JSON.stringify(await readCorrectionCache(), null, 2));
+    return { code: 0 };
+  } catch (error) {
+    console.error(`zdr: ${error instanceof Error ? error.message : String(error)}`);
+    return { code: 1 };
+  }
+}
+
+async function debugConfigCommand(deps: CliDeps): Promise<CommandResult> {
+  try {
+    console.log(JSON.stringify(await deps.loadConfig(), null, 2));
     return { code: 0 };
   } catch (error) {
     console.error(`zdr: ${error instanceof Error ? error.message : String(error)}`);
@@ -1134,6 +1149,7 @@ Usage:
   zdr debug-select   Ask the model to select from recorded candidates
   zdr debug-corrections
                       Print direct-query correction cache
+  zdr debug-config   Print merged config
   zdr debug-events [--limit <count>]
                       Print local telemetry events as JSON
   zdr debug-timing [query]
@@ -1179,7 +1195,7 @@ function zshInitScript(): string {
     "",
     "zdr() {",
     "  case \"$1\" in",
-    "    init|record-z|finish-z|clear-recovery-retry|debug-state|debug-candidates|debug-select|debug-corrections|debug-events|debug-timing|debug-provider-timing|prune-events|forget|provider-smoke|--*|-*)",
+    "    init|record-z|finish-z|clear-recovery-retry|debug-state|debug-candidates|debug-select|debug-corrections|debug-config|debug-events|debug-timing|debug-provider-timing|prune-events|forget|provider-smoke|--*|-*)",
     "      command zdr \"$@\"",
     "      return $?",
     "      ;;",

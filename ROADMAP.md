@@ -2,7 +2,7 @@
 
 ## Current Status
 
-Status: v0.4 implementation in progress.
+Status: v1.0 implementation in progress.
 
 The project currently has the v0.1 core recovery loop plus v0.2 direct-query correction memory in place. The core decisions are locked:
 
@@ -15,7 +15,7 @@ The project currently has the v0.1 core recovery loop plus v0.2 direct-query cor
 - Provider layer: Pi provider/model SDK (`@earendil-works/pi-ai`), with OpenRouter as the v0.1 default provider.
 - Scope boundary: use Pi's completion/model APIs only; do not use Pi's agent loop, coding-agent harness, TUI, tool execution, or session machinery.
 
-Current implementation status: no-arg recovery records rejected `zdr` suggestions for repeat attempts, third-attempt recovery opens an `fzf` picker over zoxide candidates plus optional `fd` scan results, `zdr <query>` uses local correction-cache hits before falling back to model selection and caching high-confidence direct-query results, and local telemetry records are inspectable with `zdr debug-events` and manually prunable with `zdr prune-events`. Provider-backed telemetry records Pi usage plus flattened token, prompt-cache, and cost fields when exposed, and live provider latency is measured separately with `zdr debug-provider-timing`.
+Current implementation status: no-arg recovery records rejected `zdr` suggestions for repeat attempts, third-attempt recovery opens an `fzf` picker over zoxide candidates plus optional `fd` scan results, `zdr <query>` uses local correction-cache hits before falling back to model selection and caching high-confidence direct-query results, and local telemetry records are inspectable with `zdr debug-events` and manually prunable with `zdr prune-events`. Provider-backed telemetry records Pi usage plus flattened token, prompt-cache, and cost fields when exposed, and live provider latency is measured separately with `zdr debug-provider-timing`. The v1 config file shape is documented and inspectable with `zdr debug-config`, but runtime provider/config wiring is still pending.
 
 ## Release Plan
 
@@ -129,7 +129,7 @@ Exit criteria:
 
 ## Near-Term Implementation Tasks
 
-1. Decide the v1.0 config file shape.
+1. Wire provider/model, telemetry, and privacy settings to config.
 2. Add bash shell integration.
 3. Add fish shell integration.
 4. Document provider/model configuration and install flow.

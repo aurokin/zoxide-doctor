@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { main } from "./cli.js";
 import type { Candidate } from "./candidates.js";
+import type { LoadedConfig } from "./config.js";
 import type { CorrectionLookup } from "./corrections.js";
 import {
   inspectCorrection,
@@ -437,6 +438,7 @@ describe("main correction cache commands", () => {
 
     const script = stdout.join("\n");
     expect(script).toContain("debug-corrections");
+    expect(script).toContain("debug-config");
     expect(script).toContain("debug-events");
     expect(script).toContain("debug-timing");
     expect(script).toContain("debug-provider-timing");
@@ -594,6 +596,53 @@ describe("main telemetry commands", () => {
 
     expect(stdout).toEqual([]);
     expect(stderr).toEqual(["zdr: --max-events requires a value", "zdr: --max-events requires a value"]);
+  });
+});
+
+describe("main config commands", () => {
+  test("prints merged config JSON", async () => {
+    const config: LoadedConfig = {
+      path: join(tempDir, "config.json"),
+      source: "default",
+      config: {
+        schema_version: 1,
+        provider: {
+          name: "openrouter",
+          model: "deepseek/deepseek-v4-flash",
+        },
+        privacy: {
+          redact_home: true,
+          redact_emails: true,
+          redact_secrets: true,
+          redact_tokens: true,
+        },
+        telemetry: {
+          enabled: true,
+          max_events: 1000,
+        },
+      },
+    };
+
+    expect(await main(["debug-config"], testDeps({ loadConfig: async () => config }))).toEqual({ code: 0 });
+
+    expect(JSON.parse(stdout.join("\n"))).toEqual(config);
+    expect(stderr).toEqual([]);
+  });
+
+  test("reports invalid config errors", async () => {
+    expect(
+      await main(
+        ["debug-config"],
+        testDeps({
+          loadConfig: async () => {
+            throw new Error("config schema_version must be 1");
+          },
+        }),
+      ),
+    ).toEqual({ code: 1 });
+
+    expect(stdout).toEqual([]);
+    expect(stderr).toEqual(["zdr: config schema_version must be 1"]);
   });
 });
 
@@ -1042,6 +1091,7 @@ function testDeps(
     appendTelemetryEvent?: AppendTelemetryEvent;
     readTelemetryEvents?: ReadTelemetryEvents;
     pruneTelemetryEvents?: PruneTelemetryEvents;
+    loadConfig?: LoadConfig;
   } = {},
 ) {
   return {
@@ -1067,6 +1117,29 @@ function testDeps(
         kept: 0,
         pruned: 0,
         dropped_invalid: 0,
+      })),
+    loadConfig:
+      input.loadConfig ??
+      (async () => ({
+        path: join(tempDir, "config.json"),
+        source: "default",
+        config: {
+          schema_version: 1,
+          provider: {
+            name: "openrouter",
+            model: "deepseek/deepseek-v4-flash",
+          },
+          privacy: {
+            redact_home: true,
+            redact_emails: true,
+            redact_secrets: true,
+            redact_tokens: true,
+          },
+          telemetry: {
+            enabled: true,
+            max_events: 1000,
+          },
+        },
       })),
     cwd: () => tempDir,
     now: () => new Date("2026-05-18T00:00:00.000Z"),
@@ -1107,6 +1180,7 @@ type RunPicker = (input: PickerInput) => Promise<PickerResult>;
 type AppendTelemetryEvent = (input: TelemetryInput) => Promise<unknown>;
 type ReadTelemetryEvents = (input?: { limit?: number }) => Promise<TelemetryEvent[]>;
 type PruneTelemetryEvents = (input: { maxEvents: number }) => Promise<TelemetryPruneResult>;
+type LoadConfig = () => Promise<LoadedConfig>;
 
 function selectionResult(candidate: Candidate | null, reason = "selected", confidence = candidate ? 0.8 : 0, usage: unknown = null) {
   return {

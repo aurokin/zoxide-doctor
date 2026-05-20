@@ -39,6 +39,7 @@ Implemented:
 Not implemented yet:
 
 - shell support beyond zsh.
+- config values are readable with `zdr debug-config`, but provider/runtime commands still use the built-in defaults until config wiring is complete.
 
 ## Install
 
@@ -68,6 +69,7 @@ Verify:
 ```bash
 zdr --version
 zdr provider-smoke
+zdr debug-config
 ```
 
 ## Shell Setup
@@ -109,6 +111,36 @@ Correction-cache commands:
 zdr debug-corrections
 zdr forget ascan
 ```
+
+Config file:
+
+```text
+~/.config/zdr/config.json
+```
+
+Current v1 config shape:
+
+```json
+{
+  "schema_version": 1,
+  "provider": {
+    "name": "openrouter",
+    "model": "deepseek/deepseek-v4-flash"
+  },
+  "privacy": {
+    "redact_home": true,
+    "redact_emails": true,
+    "redact_secrets": true,
+    "redact_tokens": true
+  },
+  "telemetry": {
+    "enabled": true,
+    "max_events": 1000
+  }
+}
+```
+
+`zdr debug-config` prints the merged config and reports whether values came from defaults or a file.
 
 Local timing diagnostics:
 
