@@ -130,8 +130,7 @@ Exit criteria:
 ## Remaining Hardening Tasks
 
 1. Add real second-attempt model reasoning controls when Pi/provider support is available.
-2. Tighten config validation and document supported behavior knobs.
-3. Polish picker UX and docs.
+2. Polish picker UX and docs.
 
 ## Remaining Packaging Tasks
 

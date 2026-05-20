@@ -197,6 +197,19 @@ Current v1 config shape:
 
 `zdr debug-config` prints the merged config and reports whether values came from defaults or a file. Provider-backed selection, `provider-smoke`, and provider timing diagnostics use `provider.name` and `provider.model`. Prompt construction uses the privacy redaction settings before sending context to the provider. Telemetry event writes honor `telemetry.enabled`, and `zdr prune-events` uses `telemetry.max_events` when no explicit limit is supplied.
 
+The v1 config is strict: unsupported keys at the top level or inside `provider`, `privacy`, or `telemetry` fail config loading instead of being ignored. This keeps misspelled settings from looking active.
+
+Supported behavior knobs:
+
+- `provider.name`: Pi provider name. The default is `openrouter`.
+- `provider.model`: Pi model ID for the configured provider.
+- `privacy.redact_home`: redact the home directory to `~` in provider prompts.
+- `privacy.redact_emails`: redact email addresses in provider prompts.
+- `privacy.redact_secrets`: redact common secret-prefixed values in provider prompts.
+- `privacy.redact_tokens`: redact long token-like strings in provider prompts.
+- `telemetry.enabled`: enable local JSONL telemetry. Default is `false`.
+- `telemetry.max_events`: default retention for `zdr prune-events`; must be an integer from `0` through `100000`.
+
 Provider/model notes:
 
 - The default provider is `openrouter` and the default model is `deepseek/deepseek-v4-flash`.

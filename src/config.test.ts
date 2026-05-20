@@ -83,7 +83,28 @@ describe("config", () => {
       },
     });
 
-    await expect(loadConfig()).rejects.toThrow("config telemetry.max_events must be a non-negative integer");
+    await expect(loadConfig()).rejects.toThrow("config telemetry.max_events must be an integer between 0 and 100000");
+  });
+
+  test("rejects oversized telemetry retention", async () => {
+    await writeConfig({
+      telemetry: {
+        max_events: 100_001,
+      },
+    });
+
+    await expect(loadConfig()).rejects.toThrow("config telemetry.max_events must be an integer between 0 and 100000");
+  });
+
+  test("rejects unsupported config keys", async () => {
+    await writeConfig({
+      provider: {
+        model: "deepseek/deepseek-v4-flash",
+        timeout_ms: 1000,
+      },
+    });
+
+    await expect(loadConfig()).rejects.toThrow("config provider contains unsupported key: timeout_ms");
   });
 });
 

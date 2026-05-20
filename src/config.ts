@@ -48,6 +48,12 @@ export const DEFAULT_CONFIG: ZdrConfig = {
   },
 };
 
+const TOP_LEVEL_KEYS = ["schema_version", "provider", "privacy", "telemetry"];
+const PROVIDER_KEYS = ["name", "model"];
+const PRIVACY_KEYS = ["redact_home", "redact_emails", "redact_secrets", "redact_tokens"];
+const TELEMETRY_KEYS = ["enabled", "max_events"];
+const MAX_TELEMETRY_EVENTS = 100_000;
+
 export function getConfigPaths(env: NodeJS.ProcessEnv = process.env): ConfigPaths {
   const base = env.XDG_CONFIG_HOME && env.XDG_CONFIG_HOME.length > 0 ? env.XDG_CONFIG_HOME : join(homeDir(env), ".config");
   const configDir = join(base, "zdr");
@@ -84,6 +90,7 @@ function mergeConfig(raw: unknown): ZdrConfig {
   if (!isRecord(raw)) {
     throw new Error("config did not match expected schema");
   }
+  rejectUnknownKeys(raw, TOP_LEVEL_KEYS, "config");
   if (raw.schema_version !== undefined && raw.schema_version !== 1) {
     throw new Error("config schema_version must be 1");
   }
@@ -91,6 +98,9 @@ function mergeConfig(raw: unknown): ZdrConfig {
   const provider = optionalRecord(raw.provider, "provider");
   const privacy = optionalRecord(raw.privacy, "privacy");
   const telemetry = optionalRecord(raw.telemetry, "telemetry");
+  rejectUnknownKeys(provider, PROVIDER_KEYS, "config provider");
+  rejectUnknownKeys(privacy, PRIVACY_KEYS, "config privacy");
+  rejectUnknownKeys(telemetry, TELEMETRY_KEYS, "config telemetry");
 
   return {
     schema_version: 1,
@@ -145,10 +155,18 @@ function optionalNonNegativeInteger(value: unknown, fallback: number, key: strin
   if (value === undefined) {
     return fallback;
   }
-  if (typeof value !== "number" || !Number.isInteger(value) || value < 0) {
-    throw new Error(`config ${key} must be a non-negative integer`);
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0 || value > MAX_TELEMETRY_EVENTS) {
+    throw new Error(`config ${key} must be an integer between 0 and ${MAX_TELEMETRY_EVENTS}`);
   }
   return value;
+}
+
+function rejectUnknownKeys(record: Record<string, unknown>, allowed: string[], label: string): void {
+  const allowedSet = new Set(allowed);
+  const unknown = Object.keys(record).filter((key) => !allowedSet.has(key));
+  if (unknown.length > 0) {
+    throw new Error(`${label} contains unsupported key: ${unknown[0]}`);
+  }
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
