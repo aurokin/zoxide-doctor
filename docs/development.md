@@ -1,0 +1,72 @@
+# Development
+
+Install dependencies:
+
+```bash
+bun install
+```
+
+Run checks:
+
+```bash
+bun run verify
+bun run smoke
+bun run src/cli.ts provider-smoke
+```
+
+Build the standalone executable:
+
+```bash
+bun run build
+./dist/zdr --version
+```
+
+Run a live provider smoke test:
+
+```bash
+OPENROUTER_API_KEY=... bun run src/cli.ts provider-smoke --live
+```
+
+## Timing
+
+Collect local executable timing:
+
+```bash
+bun run timing
+bun run timing -- ascan
+bun run timing -- --repeat 25 --budget-ms 150 ascan
+```
+
+`bun run timing` builds `dist/zdr`, runs `zdr debug-timing` repeatedly, and prints JSON with wall-clock p50/p95/max timings. Wall-clock timing includes executable startup; `command_total_ms` is the in-process diagnostic total. Use `zdr debug-provider-timing <query>` separately for live provider latency.
+
+## Shell-State Smoke Test
+
+```bash
+tmp=$(mktemp -d)
+XDG_STATE_HOME="$tmp" bun run src/cli.ts record-z --attempt smoke-1 --before /tmp/before --shell zsh -- ascan
+XDG_STATE_HOME="$tmp" bun run src/cli.ts finish-z --attempt smoke-1 --after /tmp/after --status 0
+XDG_STATE_HOME="$tmp" bun run src/cli.ts debug-state
+```
+
+## Candidate Smoke Test
+
+This requires `zoxide` to be installed and populated.
+
+```bash
+tmp=$(mktemp -d)
+XDG_STATE_HOME="$tmp" bun run src/cli.ts record-z --attempt smoke-1 --before "$PWD" --shell zsh -- ascan
+XDG_STATE_HOME="$tmp" bun run src/cli.ts finish-z --attempt smoke-1 --after "$PWD" --status 0
+XDG_STATE_HOME="$tmp" bun run src/cli.ts debug-candidates --limit 10
+```
+
+Run a live model selection against those candidates:
+
+```bash
+OPENROUTER_API_KEY=... XDG_STATE_HOME="$tmp" bun run src/cli.ts debug-select --limit 10
+```
+
+Run no-arg recovery. stdout is path-only so the shell wrapper can `cd` safely:
+
+```bash
+OPENROUTER_API_KEY=... XDG_STATE_HOME="$tmp" bun run src/cli.ts
+```
