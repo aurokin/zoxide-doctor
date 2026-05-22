@@ -65,9 +65,10 @@ Optional ChatGPT Pro/Codex Spark path:
 
 ```bash
 zdr provider-login openai-codex
+zdr config-provider openai-codex gpt-5.3-codex-spark
 ```
 
-Then set `provider.name` to `openai-codex` and `provider.model` to `gpt-5.3-codex-spark` in `~/.config/zdr/config.json`.
+This writes `provider.name` and `provider.model` in `~/.config/zdr/config.json`.
 
 Verify local setup:
 

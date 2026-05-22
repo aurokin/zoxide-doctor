@@ -3,7 +3,7 @@
 import packageJson from "../package.json" with { type: "json" };
 import { dirname, parse } from "node:path";
 import { buildCandidates, shouldAddLocalScanCandidates, type Candidate } from "./candidates.js";
-import { loadConfig, type LoadedConfig, type ZdrConfig } from "./config.js";
+import { loadConfig, setProviderConfig, type LoadedConfig, type ZdrConfig } from "./config.js";
 import {
   forgetCorrection,
   inspectCorrection,
@@ -64,6 +64,7 @@ type CliDeps = {
   readTelemetryEvents: (input?: { limit?: number }) => Promise<TelemetryEvent[]>;
   pruneTelemetryEvents: (input: { maxEvents: number }) => Promise<TelemetryPruneResult>;
   loadConfig: () => Promise<LoadedConfig>;
+  setProviderConfig: (provider: ZdrConfig["provider"]) => Promise<LoadedConfig>;
   providerLogin: (provider: string, callbacks: OAuthLoginCallbacks) => Promise<void>;
   providerLogout: (provider: string) => Promise<boolean>;
   providerAuthStatuses: (providers?: string[]) => Promise<ProviderAuthStatus[]>;
@@ -116,6 +117,8 @@ export async function main(argv: string[], deps: CliDeps = defaultDeps): Promise
       return debugTimingCommand(args, deps);
     case "debug-provider-timing":
       return debugProviderTimingCommand(args, deps);
+    case "config-provider":
+      return configProviderCommand(args, deps);
     case "prune-events":
       return pruneEventsCommand(args, deps);
     case "forget":
@@ -155,6 +158,7 @@ const defaultDeps: CliDeps = {
   readTelemetryEvents,
   pruneTelemetryEvents,
   loadConfig,
+  setProviderConfig,
   providerLogin: async (provider, callbacks) => {
     const { loginProvider } = await import("./provider/auth.js");
     return loginProvider(provider, callbacks);
@@ -1238,6 +1242,54 @@ async function providerSmokeCommand(args: string[], deps: CliDeps): Promise<Comm
   }
 }
 
+async function configProviderCommand(args: string[], deps: CliDeps): Promise<CommandResult> {
+  const parsed = parseConfigProviderArgs(args);
+  if (!parsed.ok) {
+    console.error(`zdr: ${parsed.error}`);
+    return { code: 2 };
+  }
+  try {
+    const { resolveConfiguredModel } = await import("./provider/model.js");
+    const model = await resolveConfiguredModel(parsed.provider);
+    if (!model) {
+      console.error(`zdr: Pi did not return configured ${parsed.provider.name} model ${parsed.provider.model}`);
+      return { code: 1 };
+    }
+    const config = await deps.setProviderConfig(parsed.provider);
+    console.log(
+      JSON.stringify(
+        {
+          schema_version: 1,
+          path: config.path,
+          provider: config.config.provider,
+        },
+        null,
+        2,
+      ),
+    );
+    return { code: 0 };
+  } catch (error) {
+    console.error(`zdr: ${error instanceof Error ? error.message : String(error)}`);
+    return { code: 1 };
+  }
+}
+
+type ConfigProviderArgs = { ok: true; provider: ZdrConfig["provider"] } | { ok: false; error: string };
+
+function parseConfigProviderArgs(args: string[]): ConfigProviderArgs {
+  if (args.length !== 2) {
+    return { ok: false, error: "config-provider requires provider and model" };
+  }
+  const [name, model] = args;
+  if (!name || name.startsWith("-")) {
+    return { ok: false, error: `unknown config-provider option: ${name ?? ""}` };
+  }
+  if (!model || model.startsWith("-")) {
+    return { ok: false, error: `unknown config-provider option: ${model ?? ""}` };
+  }
+  return { ok: true, provider: { name, model } };
+}
+
 async function providerLoginCommand(args: string[], deps: CliDeps): Promise<CommandResult> {
   const parsed = parseSingleProviderArg("provider-login", args);
   if (!parsed.ok) {
@@ -1392,6 +1444,8 @@ Usage:
                       Include local timing budget status in JSON
   zdr debug-provider-timing [query]
                       Measure live provider selection timing as JSON
+  zdr config-provider <provider> <model>
+                      Set provider.name and provider.model in config
   zdr prune-events [--max-events <count>]
                       Keep only the newest local telemetry events
   zdr forget <query> Remove one exact direct-query correction
@@ -1435,7 +1489,7 @@ function zshInitScript(): string {
     "",
     "zdr() {",
     "  case \"$1\" in",
-    "    init|record-z|finish-z|clear-recovery-retry|debug-state|debug-candidates|debug-select|debug-corrections|debug-config|debug-events|debug-timing|debug-provider-timing|prune-events|forget|provider-smoke|provider-login|provider-logout|provider-auth-status|--*|-*)",
+    "    init|record-z|finish-z|clear-recovery-retry|debug-state|debug-candidates|debug-select|debug-corrections|debug-config|debug-events|debug-timing|debug-provider-timing|config-provider|prune-events|forget|provider-smoke|provider-login|provider-logout|provider-auth-status|--*|-*)",
     "      command zdr \"$@\"",
     "      return $?",
     "      ;;",
@@ -1506,7 +1560,7 @@ function bashInitScript(): string {
     "zdr() {",
     "  __zdr_inside_zdr=1",
     "  case \"$1\" in",
-    "    init|record-z|finish-z|clear-recovery-retry|debug-state|debug-candidates|debug-select|debug-corrections|debug-config|debug-events|debug-timing|debug-provider-timing|prune-events|forget|provider-smoke|provider-login|provider-logout|provider-auth-status|--*|-*)",
+    "    init|record-z|finish-z|clear-recovery-retry|debug-state|debug-candidates|debug-select|debug-corrections|debug-config|debug-events|debug-timing|debug-provider-timing|config-provider|prune-events|forget|provider-smoke|provider-login|provider-logout|provider-auth-status|--*|-*)",
     "      command zdr \"$@\"",
     "      local __zdr_status=$?",
     "      __zdr_last_command=\"zdr-other\"",
@@ -1594,7 +1648,7 @@ function fishInitScript(): string {
     "",
     "function zdr",
     '    switch "$argv[1]"',
-    "        case init record-z finish-z clear-recovery-retry debug-state debug-candidates debug-select debug-corrections debug-config debug-events debug-timing debug-provider-timing prune-events forget provider-smoke provider-login provider-logout provider-auth-status '--*' '-*'",
+    "        case init record-z finish-z clear-recovery-retry debug-state debug-candidates debug-select debug-corrections debug-config debug-events debug-timing debug-provider-timing config-provider prune-events forget provider-smoke provider-login provider-logout provider-auth-status '--*' '-*'",
     "            command zdr $argv",
     "            return $status",
     "    end",

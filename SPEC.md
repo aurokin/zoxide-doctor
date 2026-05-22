@@ -249,6 +249,8 @@ Implementation shape:
 
 ZDR owns its OAuth credential store at `~/.config/zdr/auth.json`, written with `0600` permissions. `zdr provider-login <provider>` uses Pi's OAuth helpers and `zdr provider-auth-status` reports status without token material.
 
+`zdr config-provider <provider> <model>` updates only `provider.name` and `provider.model` in `~/.config/zdr/config.json` after validating that Pi knows the provider/model pair.
+
 ### 8.2 Reasoning toggle
 
 Use model-specific reasoning controls only where the chosen provider/model supports them. First calls should prefer low latency. Second-call escalation may enable stronger reasoning if supported.

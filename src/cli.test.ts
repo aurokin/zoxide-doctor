@@ -1119,6 +1119,47 @@ describe("main config commands", () => {
     expect(stdout).toEqual([]);
     expect(stderr).toEqual(["zdr: config schema_version must be 1"]);
   });
+
+  test("sets provider config after validating provider and model", async () => {
+    const config = defaultLoadedConfig({
+      provider: {
+        name: "openai-codex",
+        model: "gpt-5.3-codex-spark",
+      },
+    });
+
+    expect(
+      await main(
+        ["config-provider", "openai-codex", "gpt-5.3-codex-spark"],
+        testDeps({
+          setProviderConfig: async (provider) => {
+            expect(provider).toEqual({
+              name: "openai-codex",
+              model: "gpt-5.3-codex-spark",
+            });
+            return config;
+          },
+        }),
+      ),
+    ).toEqual({ code: 0 });
+
+    expect(JSON.parse(stdout.join("\n"))).toEqual({
+      schema_version: 1,
+      path: config.path,
+      provider: {
+        name: "openai-codex",
+        model: "gpt-5.3-codex-spark",
+      },
+    });
+    expect(stderr).toEqual([]);
+  });
+
+  test("rejects incomplete provider config args", async () => {
+    expect(await main(["config-provider", "openai-codex"], testDeps())).toEqual({ code: 2 });
+
+    expect(stdout).toEqual([]);
+    expect(stderr).toEqual(["zdr: config-provider requires provider and model"]);
+  });
 });
 
 describe("main timing command", () => {
@@ -1709,6 +1750,7 @@ function testDeps(
     readTelemetryEvents?: ReadTelemetryEvents;
     pruneTelemetryEvents?: PruneTelemetryEvents;
     loadConfig?: LoadConfig;
+    setProviderConfig?: (provider: LoadedConfig["config"]["provider"]) => Promise<LoadedConfig>;
     scanLocalDirectories?: ScanLocalDirectories;
     providerLogin?: (provider: string, callbacks: OAuthLoginCallbacks) => Promise<void>;
     providerLogout?: (provider: string) => Promise<boolean>;
@@ -1741,6 +1783,11 @@ function testDeps(
         dropped_invalid: 0,
       })),
     loadConfig: input.loadConfig ?? (async () => defaultLoadedConfig()),
+    setProviderConfig:
+      input.setProviderConfig ??
+      (async () => {
+        throw new Error("unexpected provider config write");
+      }),
     providerLogin:
       input.providerLogin ??
       (async () => {
@@ -1851,7 +1898,7 @@ function runShellRuntimeTest(shellName: "zsh" | "bash", smokeLine: string, shell
 #!/usr/bin/env bash
 printf '%s\\n' "$*" >> "$ZDR_LOG"
 case "$1" in
-  record-z|finish-z|clear-recovery-retry|debug-state|debug-candidates|debug-select|debug-corrections|debug-events|debug-timing|debug-provider-timing|prune-events|forget|init|--*|-*)
+  record-z|finish-z|clear-recovery-retry|debug-state|debug-candidates|debug-select|debug-corrections|debug-events|debug-timing|debug-provider-timing|config-provider|prune-events|forget|init|--*|-*)
     if [ "$1" = "--version" ]; then
       printf '0.0.0-test\\n'
     fi
@@ -1915,7 +1962,7 @@ function runFishRuntimeTest(fishScript: string): { skipped: boolean; output: str
 #!/usr/bin/env bash
 printf '%s\\n' "$*" >> "$ZDR_LOG"
 case "$1" in
-  record-z|finish-z|clear-recovery-retry|debug-state|debug-candidates|debug-select|debug-corrections|debug-events|debug-timing|debug-provider-timing|prune-events|forget|init|--*|-*)
+  record-z|finish-z|clear-recovery-retry|debug-state|debug-candidates|debug-select|debug-corrections|debug-events|debug-timing|debug-provider-timing|config-provider|prune-events|forget|init|--*|-*)
     if [ "$1" = "--version" ]; then
       printf '0.0.0-test\\n'
     fi

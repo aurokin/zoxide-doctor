@@ -1,5 +1,5 @@
-import { readFile } from "node:fs/promises";
-import { join } from "node:path";
+import { mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
 
 export type ZdrConfig = {
   schema_version: 1;
@@ -83,6 +83,24 @@ export async function loadConfig(env: NodeJS.ProcessEnv = process.env): Promise<
     path,
     source: "file",
     config: mergeConfig(raw),
+  };
+}
+
+export async function setProviderConfig(
+  provider: ZdrConfig["provider"],
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<LoadedConfig> {
+  const current = await loadConfig(env);
+  const config: ZdrConfig = {
+    ...current.config,
+    provider,
+  };
+  const path = getConfigPaths(env).config;
+  await writeConfigFile(path, config);
+  return {
+    path,
+    source: "file",
+    config,
   };
 }
 
@@ -182,4 +200,16 @@ function homeDir(env: NodeJS.ProcessEnv): string {
 
 function isNotFound(error: unknown): boolean {
   return typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT";
+}
+
+async function writeConfigFile(path: string, config: ZdrConfig): Promise<void> {
+  await mkdir(dirname(path), { recursive: true });
+  const tmpPath = `${path}.${process.pid}.${Date.now()}.tmp`;
+  try {
+    await writeFile(tmpPath, `${JSON.stringify(config, null, 2)}\n`);
+    await rename(tmpPath, path);
+  } catch (error) {
+    await unlink(tmpPath).catch(() => {});
+    throw error;
+  }
 }

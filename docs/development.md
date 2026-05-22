@@ -41,6 +41,7 @@ Run a live OAuth provider smoke test:
 
 ```bash
 bun run src/cli.ts provider-login openai-codex
+bun run src/cli.ts config-provider openai-codex gpt-5.3-codex-spark
 bun run src/cli.ts provider-smoke --live
 ```
 

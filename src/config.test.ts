@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
-import { DEFAULT_CONFIG, getConfigPaths, loadConfig } from "./config.js";
+import { DEFAULT_CONFIG, getConfigPaths, loadConfig, setProviderConfig } from "./config.js";
 
 let previousXdgConfigHome: string | undefined;
 let tempDir: string;
@@ -105,6 +105,49 @@ describe("config", () => {
     });
 
     await expect(loadConfig()).rejects.toThrow("config provider contains unsupported key: timeout_ms");
+  });
+
+  test("sets provider config while preserving other settings", async () => {
+    await writeConfig({
+      schema_version: 1,
+      telemetry: {
+        enabled: true,
+        max_events: 25,
+      },
+    });
+
+    await expect(
+      setProviderConfig({
+        name: "openai-codex",
+        model: "gpt-5.3-codex-spark",
+      }),
+    ).resolves.toMatchObject({
+      source: "file",
+      config: {
+        provider: {
+          name: "openai-codex",
+          model: "gpt-5.3-codex-spark",
+        },
+        telemetry: {
+          enabled: true,
+          max_events: 25,
+        },
+      },
+    });
+
+    await expect(loadConfig()).resolves.toMatchObject({
+      source: "file",
+      config: {
+        provider: {
+          name: "openai-codex",
+          model: "gpt-5.3-codex-spark",
+        },
+        telemetry: {
+          enabled: true,
+          max_events: 25,
+        },
+      },
+    });
   });
 });
 

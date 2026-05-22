@@ -48,6 +48,12 @@ zdr debug-config
 
 `debug-config` reports whether values came from defaults or a file.
 
+Set only the provider/model pair:
+
+```bash
+zdr config-provider openrouter google/gemini-2.5-flash-lite
+```
+
 ## Supported Knobs
 
 - `provider.name`: Pi provider name. The default is `openrouter`.
@@ -102,6 +108,13 @@ zdr provider-logout openai-codex
 ```
 
 OpenAI Codex via ChatGPT Pro or Plus can be configured with:
+
+```bash
+zdr provider-login openai-codex
+zdr config-provider openai-codex gpt-5.3-codex-spark
+```
+
+Equivalent JSON:
 
 ```json
 {

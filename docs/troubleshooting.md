@@ -25,6 +25,7 @@ For OAuth providers, check auth status:
 ```bash
 zdr provider-auth-status
 zdr provider-login openai-codex
+zdr config-provider openai-codex gpt-5.3-codex-spark
 ```
 
 `provider-smoke --live` reports when an OAuth provider is configured but credentials are missing.
