@@ -34,7 +34,7 @@ export const DEFAULT_CONFIG: ZdrConfig = {
   schema_version: 1,
   provider: {
     name: "openrouter",
-    model: "deepseek/deepseek-v4-flash",
+    model: "google/gemini-2.5-flash-lite",
   },
   privacy: {
     redact_home: true,

@@ -21,10 +21,27 @@ bun run build
 ./dist/zdr --version
 ```
 
+Install a dev build into `~/.local/bin/zdr`:
+
+```bash
+bun run install:dev
+```
+
+The install script rebuilds `dist/zdr`, replaces an existing `~/.local/bin/zdr` file or symlink, verifies `zdr --version`, and warns when `~/.local/bin` is not on `PATH`.
+
+The installed executable only prints the target path. The shell integration is what turns that path into `cd`, so source `zdr init <shell>` after zoxide init in any shell where you want navigation.
+
 Run a live provider smoke test:
 
 ```bash
 OPENROUTER_API_KEY=... bun run src/cli.ts provider-smoke --live
+```
+
+Run a live OAuth provider smoke test:
+
+```bash
+bun run src/cli.ts provider-login openai-codex
+bun run src/cli.ts provider-smoke --live
 ```
 
 ## Timing

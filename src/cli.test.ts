@@ -14,6 +14,7 @@ import {
   type CorrectionEntry,
 } from "./corrections.js";
 import type { PickerInput, PickerResult } from "./picker.js";
+import type { OAuthLoginCallbacks, ProviderAuthStatus } from "./provider/auth.js";
 import type { TelemetryEvent, TelemetryInput, TelemetryPruneResult } from "./telemetry.js";
 
 let previousXdgCacheHome: string | undefined;
@@ -1082,7 +1083,7 @@ describe("main config commands", () => {
         schema_version: 1,
         provider: {
           name: "openrouter",
-          model: "deepseek/deepseek-v4-flash",
+          model: "google/gemini-2.5-flash-lite",
         },
         privacy: {
           redact_home: true,
@@ -1217,7 +1218,16 @@ describe("main timing command", () => {
           expect(state.shell).toBe("direct-query");
           expect(state.query_argv).toEqual(["ascan"]);
           expect(rejectedPaths).toEqual([]);
-          return selectionResult(candidates[0] ?? null, "selected", 0.8, providerUsage());
+          return {
+            ...selectionResult(candidates[0] ?? null, "selected", 0.8, providerUsage()),
+            timings: {
+              model_resolve_ms: 1,
+              prompt_build_ms: 2,
+              provider_complete_ms: 3,
+              response_parse_ms: 4,
+              total_ms: 10,
+            },
+          };
         },
       }),
     ).toEqual({ code: 0 });
@@ -1241,6 +1251,13 @@ describe("main timing command", () => {
         selected_candidate_id: "c001",
         selected_path: selected,
         confidence: 0.8,
+        provider_timings: {
+          model_resolve_ms: 1,
+          prompt_build_ms: 2,
+          provider_complete_ms: 3,
+          response_parse_ms: 4,
+          total_ms: 10,
+        },
         provider_usage: {
           input_tokens: 100,
           cost_total: 0.0036,
@@ -1284,6 +1301,89 @@ describe("main timing command", () => {
   });
 });
 
+describe("main provider auth commands", () => {
+  test("logs in to an OAuth provider", async () => {
+    const calls: Array<{ provider: string; callbacks: OAuthLoginCallbacks }> = [];
+
+    expect(
+      await main(
+        ["provider-login", "openai-codex"],
+        testDeps({
+          providerLogin: async (provider, callbacks) => {
+            calls.push({ provider, callbacks });
+          },
+        }),
+      ),
+    ).toEqual({ code: 0 });
+
+    expect(calls.map((call) => call.provider)).toEqual(["openai-codex"]);
+    expect(calls[0]?.callbacks.onManualCodeInput).toEqual(expect.any(Function));
+    expect(JSON.parse(stdout.join("\n"))).toEqual({
+      schema_version: 1,
+      provider: "openai-codex",
+      authenticated: true,
+    });
+  });
+
+  test("logs out of an OAuth provider", async () => {
+    expect(
+      await main(
+        ["provider-logout", "openai-codex"],
+        testDeps({
+          providerLogout: async (provider) => provider === "openai-codex",
+        }),
+      ),
+    ).toEqual({ code: 0 });
+
+    expect(JSON.parse(stdout.join("\n"))).toEqual({
+      schema_version: 1,
+      provider: "openai-codex",
+      removed: true,
+    });
+  });
+
+  test("prints provider auth status", async () => {
+    expect(
+      await main(
+        ["provider-auth-status", "openai-codex"],
+        testDeps({
+          providerAuthStatuses: async (providers) => [
+            {
+              provider: providers?.[0] ?? "openai-codex",
+              authenticated: true,
+              type: "oauth",
+              expired: false,
+              expires_at: "2026-05-21T00:00:00.000Z",
+              refresh_available: true,
+            },
+          ],
+        }),
+      ),
+    ).toEqual({ code: 0 });
+
+    expect(JSON.parse(stdout.join("\n"))).toEqual({
+      schema_version: 1,
+      providers: [
+        {
+          provider: "openai-codex",
+          authenticated: true,
+          type: "oauth",
+          expired: false,
+          expires_at: "2026-05-21T00:00:00.000Z",
+          refresh_available: true,
+        },
+      ],
+    });
+  });
+
+  test("rejects missing provider login arg", async () => {
+    expect(await main(["provider-login"], testDeps())).toEqual({ code: 2 });
+
+    expect(stdout).toEqual([]);
+    expect(stderr).toEqual(["zdr: provider-login requires exactly one provider"]);
+  });
+});
+
 describe("main recovery routing", () => {
   test("first no-arg recovery uses model selection without retry announcement", async () => {
     const selected = join(tempDir, "agentscan");
@@ -1305,10 +1405,11 @@ describe("main recovery routing", () => {
               redact_tokens: true,
             },
           }),
-        selectCandidate: async ({ rejectedPaths, candidates, provider, privacy }) => {
+        selectCandidate: async ({ rejectedPaths, candidates, provider, privacy, reasoning }) => {
           expect(rejectedPaths).toEqual([]);
           expect(provider).toEqual({ name: "openrouter", model: "anthropic/claude-sonnet-4.5" });
           expect(privacy?.redact_home).toBe(false);
+          expect(reasoning).toBe("minimal");
           return selectionResult(candidates[0] ?? null);
         },
       }),
@@ -1609,6 +1710,9 @@ function testDeps(
     pruneTelemetryEvents?: PruneTelemetryEvents;
     loadConfig?: LoadConfig;
     scanLocalDirectories?: ScanLocalDirectories;
+    providerLogin?: (provider: string, callbacks: OAuthLoginCallbacks) => Promise<void>;
+    providerLogout?: (provider: string) => Promise<boolean>;
+    providerAuthStatuses?: (providers?: string[]) => Promise<ProviderAuthStatus[]>;
   } = {},
 ) {
   return {
@@ -1637,6 +1741,21 @@ function testDeps(
         dropped_invalid: 0,
       })),
     loadConfig: input.loadConfig ?? (async () => defaultLoadedConfig()),
+    providerLogin:
+      input.providerLogin ??
+      (async () => {
+        throw new Error("unexpected provider login");
+      }),
+    providerLogout:
+      input.providerLogout ??
+      (async () => {
+        throw new Error("unexpected provider logout");
+      }),
+    providerAuthStatuses:
+      input.providerAuthStatuses ??
+      (async () => {
+        throw new Error("unexpected provider auth status");
+      }),
     cwd: () => tempDir,
     now: () => new Date("2026-05-18T00:00:00.000Z"),
   };
@@ -1647,7 +1766,7 @@ function defaultLoadedConfig(overrides: Partial<LoadedConfig["config"]> = {}): L
     schema_version: 1,
     provider: {
       name: "openrouter",
-      model: "deepseek/deepseek-v4-flash",
+      model: "google/gemini-2.5-flash-lite",
     },
     privacy: {
       redact_home: true,

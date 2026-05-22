@@ -99,7 +99,7 @@ describe("config", () => {
   test("rejects unsupported config keys", async () => {
     await writeConfig({
       provider: {
-        model: "deepseek/deepseek-v4-flash",
+        model: "google/gemini-2.5-flash-lite",
         timeout_ms: 1000,
       },
     });

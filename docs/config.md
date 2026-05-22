@@ -24,7 +24,7 @@ cat > "$config_dir/config.json" <<'JSON'
   "schema_version": 1,
   "provider": {
     "name": "openrouter",
-    "model": "deepseek/deepseek-v4-flash"
+    "model": "google/gemini-2.5-flash-lite"
   },
   "privacy": {
     "redact_home": true,
@@ -66,14 +66,51 @@ The v1 config is strict: unsupported keys at the top level or inside `provider`,
 Provider-backed selection, `provider-smoke`, and provider timing diagnostics use `provider.name` and `provider.model`.
 
 - The default provider is `openrouter`.
-- The default model is `deepseek/deepseek-v4-flash`.
+- The default model is `google/gemini-2.5-flash-lite`.
 - `provider.name` must be a provider known to Pi (`@earendil-works/pi-ai`).
 - `provider.model` must be one of Pi's known model IDs for that provider.
 - `zdr provider-smoke` checks provider/model lookup without making a network call.
-- `zdr provider-smoke --live` makes a tiny completion request and requires the provider's API key.
+- `zdr provider-smoke --live` makes a tiny completion request and requires the provider's API key or OAuth login.
 
 The default OpenRouter provider uses:
 
 ```bash
 export OPENROUTER_API_KEY=...
 ```
+
+## OAuth Providers
+
+ZDR stores OAuth credentials in:
+
+```text
+~/.config/zdr/auth.json
+```
+
+The auth file is written with mode `0600`. Tokens are never printed by status commands.
+
+Log in to an OAuth provider:
+
+```bash
+zdr provider-login openai-codex
+zdr provider-auth-status
+```
+
+Log out:
+
+```bash
+zdr provider-logout openai-codex
+```
+
+OpenAI Codex via ChatGPT Pro or Plus can be configured with:
+
+```json
+{
+  "schema_version": 1,
+  "provider": {
+    "name": "openai-codex",
+    "model": "gpt-5.3-codex-spark"
+  }
+}
+```
+
+For `openai-codex`, ZDR passes Pi's Codex Responses options, omits unsupported `temperature`, and uses minimal reasoning for first-attempt selection unless a retry asks for stronger reasoning.

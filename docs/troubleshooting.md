@@ -20,6 +20,15 @@ For the default OpenRouter provider, live provider calls require:
 export OPENROUTER_API_KEY=...
 ```
 
+For OAuth providers, check auth status:
+
+```bash
+zdr provider-auth-status
+zdr provider-login openai-codex
+```
+
+`provider-smoke --live` reports when an OAuth provider is configured but credentials are missing.
+
 ## Check Recorded Shell State
 
 ```bash
@@ -59,6 +68,12 @@ Run a live model selection against those candidates:
 
 ```bash
 OPENROUTER_API_KEY=... zdr debug-select --limit 10
+```
+
+For an OAuth provider, omit the env var after login:
+
+```bash
+zdr debug-select --limit 10
 ```
 
 ## Correction Cache

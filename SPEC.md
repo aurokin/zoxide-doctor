@@ -231,22 +231,29 @@ v0.1 defaults to OpenRouter.
 
 | Provider | Base URL | Default model | Notes |
 |---|---|---|---|
-| **OpenRouter via Pi** | `https://openrouter.ai/api/v1` | `deepseek/deepseek-v4-flash` | Initial default. Selected through Pi's model registry/provider layer. |
+| **OpenRouter via Pi** | `https://openrouter.ai/api/v1` | `google/gemini-2.5-flash-lite` | Initial default. Selected through Pi's model registry/provider layer. |
+| **OpenAI Codex via Pi OAuth** | `https://chatgpt.com/backend-api` | `gpt-5.3-codex-spark` when configured | Optional ChatGPT Pro/Plus path through Pi's `openai-codex-responses` provider. |
 
 Implementation shape:
 
 - Resolve the configured provider/model through Pi, e.g. `getModel("openrouter", model)`.
 - Call a single completion API, e.g. `completeSimple(...)`, with no tools.
+- Resolve OAuth credentials from ZDR's local auth store before falling back to provider env-key behavior.
 - Request strict JSON in the prompt and parse/validate locally.
 - Pass reasoning level only when escalating and only through Pi's supported option shape.
+- Omit provider-unsupported options such as `temperature` for OpenAI Codex.
 - Capture Pi usage/cost/cache fields when present for local telemetry.
 - Keep a direct OpenAI-compatible HTTP fallback as an escape hatch only if Pi packaging/startup proves too heavy.
 
-### 8.1 Reasoning toggle
+### 8.1 OAuth providers
 
-Use model-specific reasoning controls only where the chosen OpenRouter model supports them. First calls should prefer low latency. Second-call escalation may enable stronger reasoning if supported.
+ZDR owns its OAuth credential store at `~/.config/zdr/auth.json`, written with `0600` permissions. `zdr provider-login <provider>` uses Pi's OAuth helpers and `zdr provider-auth-status` reports status without token material.
 
-### 8.2 Fallback strategy
+### 8.2 Reasoning toggle
+
+Use model-specific reasoning controls only where the chosen provider/model supports them. First calls should prefer low latency. Second-call escalation may enable stronger reasoning if supported.
+
+### 8.3 Fallback strategy
 
 No fallback chain in v0.1. On HTTP error or timeout (>5s default), fail cleanly and let the user stay where they are.
 
@@ -331,7 +338,7 @@ primary = "openrouter"
 
 [providers.openrouter]
 api_key_env = "OPENROUTER_API_KEY"
-model = "deepseek/deepseek-v4-flash"
+model = "google/gemini-2.5-flash-lite"
 
 [model_framework]
 name = "pi-ai"

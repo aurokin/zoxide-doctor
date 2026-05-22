@@ -24,6 +24,7 @@ Implemented:
 - direct lookup with `zdr <query>`.
 - local correction cache for direct-query hits.
 - local opt-in telemetry and provider usage accounting.
+- OAuth login for Pi OAuth providers such as `openai-codex`.
 - strict v1 config with provider, privacy, and telemetry settings.
 
 Not implemented yet:
@@ -37,7 +38,7 @@ Prerequisites:
 - [Bun](https://bun.sh/)
 - [zoxide](https://github.com/ajeetdsouza/zoxide)
 - zsh, bash, or fish
-- `OPENROUTER_API_KEY` for model-backed recovery and direct-query cache misses
+- `OPENROUTER_API_KEY` for the default model-backed recovery path, or OAuth login for an OAuth provider
 
 Build the standalone executable:
 
@@ -46,18 +47,27 @@ bun install
 bun run build
 ```
 
-Put `dist/zdr` somewhere on `PATH`. For local development, one simple option is:
+Install a dev build into `~/.local/bin`:
 
 ```bash
-mkdir -p ~/.local/bin
-ln -sf "$PWD/dist/zdr" ~/.local/bin/zdr
+bun run install:dev
 ```
+
+The executable alone only prints the target path. The shell integration is what turns that path into `cd`, so source `zdr init <shell>` after zoxide init.
 
 Set the provider API key. The default OpenRouter provider uses `OPENROUTER_API_KEY`:
 
 ```bash
 export OPENROUTER_API_KEY=...
 ```
+
+Optional ChatGPT Pro/Codex Spark path:
+
+```bash
+zdr provider-login openai-codex
+```
+
+Then set `provider.name` to `openai-codex` and `provider.model` to `gpt-5.3-codex-spark` in `~/.config/zdr/config.json`.
 
 Verify local setup:
 
@@ -103,7 +113,7 @@ z ascan
 zdr
 ```
 
-If the first repair is also wrong, run `zdr` again. The second no-arg recovery excludes the previous `zdr` suggestion and requests high reasoning effort through Pi when the configured model/provider supports reasoning controls. Unsupported models ignore that option through Pi.
+First no-arg recovery requests minimal reasoning effort through Pi when the configured model/provider supports reasoning controls. If the first repair is also wrong, run `zdr` again. The second no-arg recovery excludes the previous `zdr` suggestion and requests high reasoning effort. Unsupported models ignore those options through Pi.
 
 If the second repair is wrong too, run `zdr` a third time. The third recovery opens an `fzf` picker seeded with the original query, zoxide-ranked candidates, and optional `fd` scan results from the current recovery context.
 
@@ -126,7 +136,7 @@ zdr forget ascan
 
 - zsh, bash, and fish are supported.
 - Third-attempt picker fallback requires `fzf`; `fd` is optional and adds bounded local directory scan results when available.
-- Provider-backed paths require `OPENROUTER_API_KEY`.
+- Provider-backed paths require either the provider's API key environment variable or `zdr provider-login` for OAuth providers.
 - Correction memory is separate from zoxide and does not change zoxide frecency scores.
 
 ## More Documentation

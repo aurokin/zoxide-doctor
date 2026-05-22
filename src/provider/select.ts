@@ -2,16 +2,29 @@ import type { Candidate } from "../candidates.js";
 import { DEFAULT_CONFIG, type ZdrConfig } from "../config.js";
 import { buildSelectionPrompt, parseSelectionResponse, type SelectionResponse } from "../prompt.js";
 import type { FinishedZState } from "../shell-state.js";
+import { resolveProviderAuth } from "./auth.js";
 import { resolveConfiguredModel } from "./model.js";
+import { selectionCompletionOptions } from "./options.js";
 
 export type SelectionResult = {
   selection: SelectionResponse;
   candidate: Candidate | null;
   raw_text: string;
   usage: unknown;
+  timings?: SelectionTimings;
 };
 
 export type ProviderReasoning = "minimal" | "low" | "medium" | "high" | "xhigh";
+
+export type SelectionTimings = {
+  model_resolve_ms: number;
+  prompt_build_ms: number;
+  provider_complete_ms: number;
+  response_parse_ms: number;
+  total_ms: number;
+};
+
+const SELECTION_MAX_TOKENS = 256;
 
 export async function selectCandidate(input: {
   state: FinishedZState;
@@ -21,14 +34,21 @@ export async function selectCandidate(input: {
   privacy?: ZdrConfig["privacy"];
   reasoning?: ProviderReasoning;
 }): Promise<SelectionResult> {
+  const startedAt = performance.now();
   const { completeSimple } = await import("@earendil-works/pi-ai");
   const provider = input.provider ?? DEFAULT_CONFIG.provider;
-  const model = await resolveConfiguredModel(provider);
+  const auth = await resolveProviderAuth(provider.name);
+  const modelResolveStartedAt = performance.now();
+  const model = await resolveConfiguredModel(provider, auth);
+  const modelResolveMs = elapsedMs(modelResolveStartedAt);
   if (!model) {
     throw new Error(`Pi did not return configured ${provider.name} model ${provider.model}`);
   }
 
+  const promptBuildStartedAt = performance.now();
   const prompt = buildSelectionPrompt(input);
+  const promptBuildMs = elapsedMs(promptBuildStartedAt);
+  const providerCompleteStartedAt = performance.now();
   const response = await completeSimple(
     model,
     {
@@ -41,14 +61,17 @@ export async function selectCandidate(input: {
         },
       ],
     },
-    {
-      maxTokens: 1024,
-      temperature: 0,
+    selectionCompletionOptions({
+      provider,
+      maxTokens: SELECTION_MAX_TOKENS,
       timeoutMs: 10_000,
       ...(input.reasoning ? { reasoning: input.reasoning } : {}),
-    },
+      ...(auth ? { apiKey: auth.apiKey } : {}),
+    }),
   );
+  const providerCompleteMs = elapsedMs(providerCompleteStartedAt);
 
+  const responseParseStartedAt = performance.now();
   const text = response.content
     .filter((block) => block.type === "text")
     .map((block) => block.text)
@@ -68,6 +91,7 @@ export async function selectCandidate(input: {
   } catch (error) {
     throw new Error(`${error instanceof Error ? error.message : String(error)}; ${providerResponseSummary(rawText)}`);
   }
+  const responseParseMs = elapsedMs(responseParseStartedAt);
   return {
     selection,
     candidate: selection.candidate_id
@@ -75,7 +99,18 @@ export async function selectCandidate(input: {
       : null,
     raw_text: rawText,
     usage: response.usage,
+    timings: {
+      model_resolve_ms: modelResolveMs,
+      prompt_build_ms: promptBuildMs,
+      provider_complete_ms: providerCompleteMs,
+      response_parse_ms: responseParseMs,
+      total_ms: elapsedMs(startedAt),
+    },
   };
+}
+
+function elapsedMs(start: number): number {
+  return Math.max(0, Math.round((performance.now() - start) * 1000) / 1000);
 }
 
 function providerResponseSummary(rawText: string): string {

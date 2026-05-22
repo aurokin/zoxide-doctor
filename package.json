@@ -20,6 +20,7 @@
     "verify": "bun run check && bun test && bun run build",
     "start": "bun run src/cli.ts",
     "build": "bun build src/cli.ts --compile --outfile dist/zdr",
+    "install:dev": "bun run scripts/install-dev-build.ts",
     "release:check-version": "bun run scripts/check-release-version.ts",
     "release:build": "bun run scripts/build-release.ts",
     "smoke": "bun run src/cli.ts --version",

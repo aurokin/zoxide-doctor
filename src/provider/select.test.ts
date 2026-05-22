@@ -1,4 +1,7 @@
-import { afterEach, describe, expect, mock, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { mkdtemp, rm } from "node:fs/promises";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 import type { Candidate } from "../candidates.js";
 import type { FinishedZState } from "../shell-state.js";
 import { selectCandidate } from "./select.js";
@@ -9,15 +12,32 @@ const completeSimple = mock(async () => ({
 }));
 
 const malformedProviderText = `${"x".repeat(150)} auro@example.com sk-live-secret0123456789abcdef 0123456789abcdef0123456789abcdef`;
+let tempDir: string;
+let previousXdgConfigHome: string | undefined;
 
 mock.module("@earendil-works/pi-ai", () => ({
   completeSimple,
-  getProviders: () => ["openrouter"],
-  getModels: () => [{ id: "deepseek/deepseek-v4-flash" }],
+  getProviders: () => ["openrouter", "openai-codex"],
+  getModels: (provider: string) =>
+    provider === "openai-codex"
+      ? [{ id: "gpt-5.3-codex-spark" }]
+      : [{ id: "google/gemini-2.5-flash-lite" }],
 }));
+
+beforeEach(async () => {
+  previousXdgConfigHome = process.env.XDG_CONFIG_HOME;
+  tempDir = await mkdtemp(join(tmpdir(), "zdr-select-"));
+  process.env.XDG_CONFIG_HOME = tempDir;
+});
 
 afterEach(() => {
   completeSimple.mockClear();
+  if (previousXdgConfigHome === undefined) {
+    delete process.env.XDG_CONFIG_HOME;
+  } else {
+    process.env.XDG_CONFIG_HOME = previousXdgConfigHome;
+  }
+  return rm(tempDir, { recursive: true, force: true });
 });
 
 describe("selectCandidate", () => {
@@ -58,8 +78,57 @@ describe("selectCandidate", () => {
 
     const call = completeSimple.mock.calls[0] as unknown[] | undefined;
     expect(call?.[2]).toMatchObject({
+      maxTokens: 256,
       reasoning: "high",
     });
+  });
+
+  test("omits reasoning by default and reports timings", async () => {
+    completeSimple.mockImplementationOnce(async () => ({
+      content: [{ type: "text", text: '{"candidate_id":"c001","confidence":0.8,"reason":"selected"}' }],
+      usage: null,
+    }));
+
+    const result = await selectCandidate({
+      state: finishedZState(),
+      candidates: [candidate()],
+    });
+
+    const call = completeSimple.mock.calls[0] as unknown[] | undefined;
+    expect(call?.[2]).toMatchObject({
+      maxTokens: 256,
+    });
+    expect(call?.[2]).not.toHaveProperty("reasoning");
+    expect(result.timings).toMatchObject({
+      model_resolve_ms: expect.any(Number),
+      prompt_build_ms: expect.any(Number),
+      provider_complete_ms: expect.any(Number),
+      response_parse_ms: expect.any(Number),
+      total_ms: expect.any(Number),
+    });
+  });
+
+  test("normalizes OpenAI Codex options", async () => {
+    completeSimple.mockImplementationOnce(async () => ({
+      content: [{ type: "text", text: '{"candidate_id":"c001","confidence":0.8,"reason":"selected"}' }],
+      usage: null,
+    }));
+
+    await selectCandidate({
+      state: finishedZState(),
+      candidates: [candidate()],
+      provider: {
+        name: "openai-codex",
+        model: "gpt-5.3-codex-spark",
+      },
+    });
+
+    const call = completeSimple.mock.calls[0] as unknown[] | undefined;
+    expect(call?.[2]).toMatchObject({
+      maxTokens: 256,
+      reasoning: "minimal",
+    });
+    expect(call?.[2]).not.toHaveProperty("temperature");
   });
 });
 

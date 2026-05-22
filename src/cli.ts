@@ -25,6 +25,7 @@ import {
 } from "./shell-state.js";
 import { loadZoxideEntries, type ZoxideEntry } from "./zoxide.js";
 import type { PickerInput, PickerResult } from "./picker.js";
+import type { OAuthLoginCallbacks, ProviderAuthStatus } from "./provider/auth.js";
 import type { ProviderReasoning, SelectionResult } from "./provider/select.js";
 import { summarizeProviderUsage } from "./provider/usage.js";
 import { scanLocalDirectories } from "./local-scan.js";
@@ -63,6 +64,9 @@ type CliDeps = {
   readTelemetryEvents: (input?: { limit?: number }) => Promise<TelemetryEvent[]>;
   pruneTelemetryEvents: (input: { maxEvents: number }) => Promise<TelemetryPruneResult>;
   loadConfig: () => Promise<LoadedConfig>;
+  providerLogin: (provider: string, callbacks: OAuthLoginCallbacks) => Promise<void>;
+  providerLogout: (provider: string) => Promise<boolean>;
+  providerAuthStatuses: (providers?: string[]) => Promise<ProviderAuthStatus[]>;
   cwd: () => string;
   now: () => Date;
 };
@@ -118,6 +122,12 @@ export async function main(argv: string[], deps: CliDeps = defaultDeps): Promise
       return forgetCommand(args);
     case "provider-smoke":
       return providerSmokeCommand(args, deps);
+    case "provider-login":
+      return providerLoginCommand(args, deps);
+    case "provider-logout":
+      return providerLogoutCommand(args, deps);
+    case "provider-auth-status":
+      return providerAuthStatusCommand(args, deps);
     default:
       if (command.startsWith("-")) {
         console.error(`zdr: unknown option: ${command}`);
@@ -145,6 +155,18 @@ const defaultDeps: CliDeps = {
   readTelemetryEvents,
   pruneTelemetryEvents,
   loadConfig,
+  providerLogin: async (provider, callbacks) => {
+    const { loginProvider } = await import("./provider/auth.js");
+    return loginProvider(provider, callbacks);
+  },
+  providerLogout: async (provider) => {
+    const { logoutProvider } = await import("./provider/auth.js");
+    return logoutProvider(provider);
+  },
+  providerAuthStatuses: async (providers) => {
+    const { getProviderAuthStatuses } = await import("./provider/auth.js");
+    return getProviderAuthStatuses(providers);
+  },
   cwd: () => process.cwd(),
   now: () => new Date(),
 };
@@ -556,6 +578,7 @@ async function debugProviderTimingCommand(args: string[], deps: CliDeps): Promis
           selected_path: result.candidate?.path ?? null,
           confidence: result.selection.confidence,
           reason: result.selection.reason,
+          ...(result.timings === undefined ? {} : { provider_timings: result.timings }),
           ...(result.usage === null || result.usage === undefined ? {} : { usage: result.usage }),
           ...(providerUsage === null ? {} : { provider_usage: providerUsage }),
         };
@@ -1139,7 +1162,7 @@ async function runSelection(
     rejectedPaths,
     provider: config.provider,
     privacy: config.privacy,
-    ...(options.announceRetry ? { reasoning: "high" } : {}),
+    reasoning: options.announceRetry ? "high" : "minimal",
   });
   return { candidates, result, rejectedPaths };
 }
@@ -1215,6 +1238,122 @@ async function providerSmokeCommand(args: string[], deps: CliDeps): Promise<Comm
   }
 }
 
+async function providerLoginCommand(args: string[], deps: CliDeps): Promise<CommandResult> {
+  const parsed = parseSingleProviderArg("provider-login", args);
+  if (!parsed.ok) {
+    console.error(`zdr: ${parsed.error}`);
+    return { code: 2 };
+  }
+
+  try {
+    const loginAbort = new AbortController();
+    try {
+      await deps.providerLogin(parsed.provider, {
+        onAuth: (info) => {
+          console.error(`zdr: open this URL to log in to ${parsed.provider}:`);
+          console.error(info.url);
+          if (info.instructions) {
+            console.error(`zdr: ${info.instructions}`);
+          }
+          openBrowser(info.url);
+        },
+        onPrompt: async (prompt) => {
+          return promptForOAuthInput(prompt.message, loginAbort.signal);
+        },
+        onProgress: (message) => console.error(`zdr: ${message}`),
+        onManualCodeInput: async () => promptForOAuthInput("Paste redirect URL or authorization code:", loginAbort.signal),
+      });
+    } finally {
+      loginAbort.abort();
+    }
+    console.log(JSON.stringify({ schema_version: 1, provider: parsed.provider, authenticated: true }, null, 2));
+    return { code: 0 };
+  } catch (error) {
+    console.error(`zdr: ${error instanceof Error ? error.message : String(error)}`);
+    return { code: 1 };
+  }
+}
+
+async function promptForOAuthInput(message: string, signal?: AbortSignal): Promise<string> {
+  if (signal?.aborted) {
+    throw new Error("OAuth login completed");
+  }
+  const { createInterface } = await import("node:readline/promises");
+  const rl = createInterface({ input: process.stdin, output: process.stderr });
+  try {
+    if (signal) {
+      return await rl.question(`zdr: ${message} `, { signal });
+    }
+    return await rl.question(`zdr: ${message} `);
+  } finally {
+    rl.close();
+  }
+}
+
+async function providerLogoutCommand(args: string[], deps: CliDeps): Promise<CommandResult> {
+  const parsed = parseSingleProviderArg("provider-logout", args);
+  if (!parsed.ok) {
+    console.error(`zdr: ${parsed.error}`);
+    return { code: 2 };
+  }
+  try {
+    const removed = await deps.providerLogout(parsed.provider);
+    console.log(JSON.stringify({ schema_version: 1, provider: parsed.provider, removed }, null, 2));
+    return { code: 0 };
+  } catch (error) {
+    console.error(`zdr: ${error instanceof Error ? error.message : String(error)}`);
+    return { code: 1 };
+  }
+}
+
+async function providerAuthStatusCommand(args: string[], deps: CliDeps): Promise<CommandResult> {
+  if (args.length > 1) {
+    console.error("zdr: provider-auth-status accepts at most one provider");
+    return { code: 2 };
+  }
+  if (args[0]?.startsWith("-")) {
+    console.error(`zdr: unknown provider-auth-status option: ${args[0]}`);
+    return { code: 2 };
+  }
+  try {
+    const statuses = await deps.providerAuthStatuses(args[0] ? [args[0]] : undefined);
+    console.log(JSON.stringify({ schema_version: 1, providers: statuses }, null, 2));
+    return { code: 0 };
+  } catch (error) {
+    console.error(`zdr: ${error instanceof Error ? error.message : String(error)}`);
+    return { code: 1 };
+  }
+}
+
+type ProviderArg = { ok: true; provider: string } | { ok: false; error: string };
+
+function parseSingleProviderArg(command: string, args: string[]): ProviderArg {
+  if (args.length !== 1) {
+    return { ok: false, error: `${command} requires exactly one provider` };
+  }
+  if (args[0]?.startsWith("-")) {
+    return { ok: false, error: `unknown ${command} option: ${args[0]}` };
+  }
+  return { ok: true, provider: args[0] as string };
+}
+
+function openBrowser(url: string): void {
+  if (process.env.ZDR_NO_OPEN_BROWSER === "1") {
+    return;
+  }
+  const command =
+    process.platform === "darwin" ? "open" : process.platform === "win32" ? "cmd" : "xdg-open";
+  const args = process.platform === "win32" ? ["/c", "start", "", url] : [url];
+  try {
+    Bun.spawn([command, ...args], {
+      stdout: "ignore",
+      stderr: "ignore",
+    });
+  } catch {
+    // The printed URL is the fallback.
+  }
+}
+
 async function telemetryEnabledFromConfig(deps: CliDeps): Promise<boolean> {
   const envValue = process.env.ZDR_TELEMETRY;
   if (envValue && envValue.length > 0) {
@@ -1259,6 +1398,12 @@ Usage:
   zdr provider-smoke  Verify Pi provider/model lookup
   zdr provider-smoke --live
                       Make a tiny live provider completion
+  zdr provider-login <provider>
+                      Log in to an OAuth provider
+  zdr provider-logout <provider>
+                      Remove stored OAuth credentials
+  zdr provider-auth-status [provider]
+                      Print OAuth provider auth status
   zdr --version       Print version
 `);
 }
@@ -1290,7 +1435,7 @@ function zshInitScript(): string {
     "",
     "zdr() {",
     "  case \"$1\" in",
-    "    init|record-z|finish-z|clear-recovery-retry|debug-state|debug-candidates|debug-select|debug-corrections|debug-config|debug-events|debug-timing|debug-provider-timing|prune-events|forget|provider-smoke|--*|-*)",
+    "    init|record-z|finish-z|clear-recovery-retry|debug-state|debug-candidates|debug-select|debug-corrections|debug-config|debug-events|debug-timing|debug-provider-timing|prune-events|forget|provider-smoke|provider-login|provider-logout|provider-auth-status|--*|-*)",
     "      command zdr \"$@\"",
     "      return $?",
     "      ;;",
@@ -1361,7 +1506,7 @@ function bashInitScript(): string {
     "zdr() {",
     "  __zdr_inside_zdr=1",
     "  case \"$1\" in",
-    "    init|record-z|finish-z|clear-recovery-retry|debug-state|debug-candidates|debug-select|debug-corrections|debug-config|debug-events|debug-timing|debug-provider-timing|prune-events|forget|provider-smoke|--*|-*)",
+    "    init|record-z|finish-z|clear-recovery-retry|debug-state|debug-candidates|debug-select|debug-corrections|debug-config|debug-events|debug-timing|debug-provider-timing|prune-events|forget|provider-smoke|provider-login|provider-logout|provider-auth-status|--*|-*)",
     "      command zdr \"$@\"",
     "      local __zdr_status=$?",
     "      __zdr_last_command=\"zdr-other\"",
@@ -1449,7 +1594,7 @@ function fishInitScript(): string {
     "",
     "function zdr",
     '    switch "$argv[1]"',
-    "        case init record-z finish-z clear-recovery-retry debug-state debug-candidates debug-select debug-corrections debug-config debug-events debug-timing debug-provider-timing prune-events forget provider-smoke '--*' '-*'",
+    "        case init record-z finish-z clear-recovery-retry debug-state debug-candidates debug-select debug-corrections debug-config debug-events debug-timing debug-provider-timing prune-events forget provider-smoke provider-login provider-logout provider-auth-status '--*' '-*'",
     "            command zdr $argv",
     "            return $status",
     "    end",
