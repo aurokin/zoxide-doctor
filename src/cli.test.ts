@@ -1438,6 +1438,122 @@ describe("main timing command", () => {
     expect(stdout).toEqual([]);
     expect(stderr).toEqual(["zdr: unknown debug-provider-timing option: --live"]);
   });
+
+  test("benchmarks provider selection for a direct query", async () => {
+    const selected = join(tempDir, "agentscan");
+    let calls = 0;
+
+    expect(
+      await main(["benchmark-provider", "ascan", "--repeat", "2"], {
+        ...testDeps(),
+        loadZoxideEntries: async () => [
+          { path: selected, score: 10, rank: 1 },
+          { path: join(tempDir, "other"), score: 5, rank: 2 },
+        ],
+        selectCandidate: async ({ state, candidates }) => {
+          calls += 1;
+          expect(state.shell).toBe("direct-query");
+          expect(state.query_argv).toEqual(["ascan"]);
+          return {
+            ...selectionResult(candidates[0] ?? null, "selected", 0.9, providerUsage()),
+            timings: {
+              model_resolve_ms: 1,
+              prompt_build_ms: 2,
+              provider_complete_ms: calls * 10,
+              response_parse_ms: 4,
+              total_ms: calls * 10 + 7,
+            },
+          };
+        },
+      }),
+    ).toEqual({ code: 0 });
+
+    const payload = JSON.parse(stdout.join("\n")) as BenchmarkProviderPayload;
+    expect(payload.command).toBe("benchmark-provider");
+    expect(payload.query).toBe("ascan");
+    expect(payload.mode).toBe("direct-query");
+    expect(payload.repeat).toBe(2);
+    expect(payload.ok).toBe(true);
+    expect(payload.context).toMatchObject({
+      zoxide_entry_count: 2,
+      candidate_count: 2,
+      rejected_path_count: 0,
+    });
+    expect(payload.summary).toMatchObject({
+      iteration_count: 2,
+      success_count: 2,
+      failure_count: 0,
+      provider_complete_ms: {
+        min: 10,
+        p50: 10,
+        p95: 20,
+        max: 20,
+        average: 15,
+      },
+      selected_paths: {
+        [selected]: 2,
+      },
+      usage: {
+        total_tokens: 350,
+        average_tokens: 175,
+        cost_total: 0.0072,
+        average_cost: 0.0036,
+      },
+    });
+    expect(payload.iterations).toHaveLength(2);
+    expect(payload.iterations.every((iteration) => iteration.ok)).toBe(true);
+    expect(calls).toBe(2);
+    expect(stderr).toEqual([]);
+  });
+
+  test("reports benchmark provider iteration failures", async () => {
+    const selected = join(tempDir, "agentscan");
+    let calls = 0;
+
+    expect(
+      await main(["benchmark-provider", "--repeat=2", "ascan"], {
+        ...testDeps(),
+        loadZoxideEntries: async () => [{ path: selected, score: 10, rank: 1 }],
+        selectCandidate: async ({ candidates }) => {
+          calls += 1;
+          if (calls === 2) {
+            throw new Error("provider unavailable");
+          }
+          return selectionResult(candidates[0] ?? null);
+        },
+      }),
+    ).toEqual({ code: 1 });
+
+    const payload = JSON.parse(stdout.join("\n")) as BenchmarkProviderPayload;
+    expect(payload.ok).toBe(false);
+    expect(payload.summary).toMatchObject({
+      iteration_count: 2,
+      success_count: 1,
+      failure_count: 1,
+      selected_paths: {
+        [selected]: 1,
+      },
+    });
+    expect(payload.iterations[1]).toMatchObject({
+      index: 2,
+      ok: false,
+      error: "provider unavailable",
+    });
+    expect(stderr).toEqual([]);
+  });
+
+  test("rejects invalid benchmark provider repeat values", async () => {
+    expect(await main(["benchmark-provider", "ascan", "--repeat", "0"], testDeps())).toEqual({ code: 2 });
+    expect(await main(["benchmark-provider", "--repeat=21", "ascan"], testDeps())).toEqual({ code: 2 });
+    expect(await main(["benchmark-provider", "--live", "ascan"], testDeps())).toEqual({ code: 2 });
+
+    expect(stdout).toEqual([]);
+    expect(stderr).toEqual([
+      "zdr: --repeat must be a positive integer",
+      "zdr: --repeat must be 20 or less",
+      "zdr: unknown benchmark-provider option: --live",
+    ]);
+  });
 });
 
 describe("main provider auth commands", () => {
@@ -1998,7 +2114,7 @@ function runShellRuntimeTest(shellName: "zsh" | "bash", smokeLine: string, shell
 #!/usr/bin/env bash
 printf '%s\\n' "$*" >> "$ZDR_LOG"
 case "$1" in
-  record-z|finish-z|clear-recovery-retry|debug-state|debug-candidates|debug-select|debug-corrections|debug-events|debug-timing|debug-provider-timing|doctor|config-provider|prune-events|forget|init|--*|-*)
+  record-z|finish-z|clear-recovery-retry|debug-state|debug-candidates|debug-select|debug-corrections|debug-events|debug-timing|debug-provider-timing|benchmark-provider|doctor|config-provider|prune-events|forget|init|--*|-*)
     if [ "$1" = "--version" ]; then
       printf '0.0.0-test\\n'
     fi
@@ -2062,7 +2178,7 @@ function runFishRuntimeTest(fishScript: string): { skipped: boolean; output: str
 #!/usr/bin/env bash
 printf '%s\\n' "$*" >> "$ZDR_LOG"
 case "$1" in
-  record-z|finish-z|clear-recovery-retry|debug-state|debug-candidates|debug-select|debug-corrections|debug-events|debug-timing|debug-provider-timing|doctor|config-provider|prune-events|forget|init|--*|-*)
+  record-z|finish-z|clear-recovery-retry|debug-state|debug-candidates|debug-select|debug-corrections|debug-events|debug-timing|debug-provider-timing|benchmark-provider|doctor|config-provider|prune-events|forget|init|--*|-*)
     if [ "$1" = "--version" ]; then
       printf '0.0.0-test\\n'
     fi
@@ -2161,6 +2277,25 @@ type TimingPayload = {
     name: string;
     ok: boolean;
     skipped?: boolean;
+    duration_ms: number;
+    metadata?: Record<string, unknown>;
+    error?: string;
+  }>;
+};
+
+type BenchmarkProviderPayload = {
+  schema_version: 1;
+  command: "benchmark-provider";
+  query: string;
+  mode: "direct-query" | "recovery";
+  repeat: number;
+  ok: boolean;
+  total_duration_ms: number;
+  context: Record<string, unknown>;
+  summary: Record<string, unknown>;
+  iterations: Array<{
+    index: number;
+    ok: boolean;
     duration_ms: number;
     metadata?: Record<string, unknown>;
     error?: string;

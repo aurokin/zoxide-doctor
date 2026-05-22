@@ -120,6 +120,8 @@ export async function main(argv: string[], deps: CliDeps = defaultDeps): Promise
       return debugTimingCommand(args, deps);
     case "debug-provider-timing":
       return debugProviderTimingCommand(args, deps);
+    case "benchmark-provider":
+      return benchmarkProviderCommand(args, deps);
     case "doctor":
       return doctorCommand(args, deps);
     case "config-provider":
@@ -573,26 +575,7 @@ async function debugProviderTimingCommand(args: string[], deps: CliDeps): Promis
   const selectionState = state;
   if (selectionState && candidates.length > 0) {
     measurements.push(
-      await measureStep("provider-selection", async () => {
-        const config = (await deps.loadConfig()).config;
-        const result = await deps.selectCandidate({
-          state: selectionState,
-          candidates,
-          rejectedPaths,
-          provider: config.provider,
-          privacy: config.privacy,
-        });
-        const providerUsage = summarizeProviderUsage(result.usage);
-        return {
-          selected_candidate_id: result.selection.candidate_id,
-          selected_path: result.candidate?.path ?? null,
-          confidence: result.selection.confidence,
-          reason: result.selection.reason,
-          ...(result.timings === undefined ? {} : { provider_timings: result.timings }),
-          ...(result.usage === null || result.usage === undefined ? {} : { usage: result.usage }),
-          ...(providerUsage === null ? {} : { provider_usage: providerUsage }),
-        };
-      }),
+      await measureStep("provider-selection", () => runProviderSelectionForTiming(selectionState, candidates, rejectedPaths, deps)),
     );
   } else {
     measurements.push({
@@ -617,6 +600,241 @@ async function debugProviderTimingCommand(args: string[], deps: CliDeps): Promis
     ),
   );
   return { code: 0 };
+}
+
+async function benchmarkProviderCommand(args: string[], deps: CliDeps): Promise<CommandResult> {
+  const parsed = parseBenchmarkProviderArgs(args);
+  if (!parsed.ok) {
+    console.error(`zdr: ${parsed.error}`);
+    return { code: 2 };
+  }
+
+  const commandStart = performance.now();
+  const contextStart = performance.now();
+  let context: Awaited<ReturnType<typeof buildProviderTimingContext>>;
+  try {
+    context = await buildProviderTimingContext(parsed.queryArgv, deps);
+  } catch (error) {
+    console.error(`zdr: ${error instanceof Error ? error.message : String(error)}`);
+    return { code: 1 };
+  }
+  const contextDurationMs = elapsedMs(contextStart);
+
+  const iterations: ProviderBenchmarkIteration[] = [];
+  for (let index = 0; index < parsed.repeat; index += 1) {
+    const start = performance.now();
+    try {
+      const metadata = await runProviderSelectionForTiming(context.state, context.candidates, context.rejectedPaths, deps);
+      iterations.push({
+        index: index + 1,
+        ok: true,
+        duration_ms: elapsedMs(start),
+        metadata,
+      });
+    } catch (error) {
+      iterations.push({
+        index: index + 1,
+        ok: false,
+        duration_ms: elapsedMs(start),
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  console.log(
+    JSON.stringify(
+      {
+        schema_version: 1,
+        command: "benchmark-provider",
+        query: context.state.query_argv.join(" "),
+        mode: parsed.queryArgv.length > 0 ? "direct-query" : "recovery",
+        repeat: parsed.repeat,
+        ok: iterations.every((iteration) => iteration.ok),
+        total_duration_ms: elapsedMs(commandStart),
+        context: {
+          duration_ms: contextDurationMs,
+          zoxide_entry_count: context.entryCount,
+          candidate_count: context.candidates.length,
+          rejected_path_count: context.rejectedPaths.length,
+        },
+        summary: summarizeProviderBenchmark(iterations),
+        iterations,
+      },
+      null,
+      2,
+    ),
+  );
+  return { code: iterations.every((iteration) => iteration.ok) ? 0 : 1 };
+}
+
+async function runProviderSelectionForTiming(
+  state: FinishedZState,
+  candidates: Candidate[],
+  rejectedPaths: string[],
+  deps: CliDeps,
+): Promise<Record<string, unknown>> {
+  const config = (await deps.loadConfig()).config;
+  const result = await deps.selectCandidate({
+    state,
+    candidates,
+    rejectedPaths,
+    provider: config.provider,
+    privacy: config.privacy,
+  });
+  const providerUsage = summarizeProviderUsage(result.usage);
+  return {
+    selected_candidate_id: result.selection.candidate_id,
+    selected_path: result.candidate?.path ?? null,
+    confidence: result.selection.confidence,
+    reason: result.selection.reason,
+    ...(result.timings === undefined ? {} : { provider_timings: result.timings }),
+    ...(result.usage === null || result.usage === undefined ? {} : { usage: result.usage }),
+    ...(providerUsage === null ? {} : { provider_usage: providerUsage }),
+  };
+}
+
+type ProviderBenchmarkIteration = {
+  index: number;
+  ok: boolean;
+  duration_ms: number;
+  metadata?: Record<string, unknown>;
+  error?: string;
+};
+
+type BenchmarkProviderArgs =
+  | { ok: true; queryArgv: string[]; repeat: number }
+  | { ok: false; error: string };
+
+const DEFAULT_PROVIDER_BENCHMARK_REPEAT = 3;
+const MAX_PROVIDER_BENCHMARK_REPEAT = 20;
+
+function parseBenchmarkProviderArgs(args: string[]): BenchmarkProviderArgs {
+  const queryArgv: string[] = [];
+  let repeat = DEFAULT_PROVIDER_BENCHMARK_REPEAT;
+
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+    if (!arg) {
+      return { ok: false, error: "unexpected missing argument" };
+    }
+    if (arg === "--repeat") {
+      const value = args[index + 1];
+      if (!value) {
+        return { ok: false, error: "--repeat requires a value" };
+      }
+      const parsed = parseProviderBenchmarkRepeat(value);
+      if (!parsed.ok) {
+        return parsed;
+      }
+      repeat = parsed.value;
+      index += 1;
+      continue;
+    }
+    if (arg.startsWith("--repeat=")) {
+      const parsed = parseProviderBenchmarkRepeat(arg.slice("--repeat=".length));
+      if (!parsed.ok) {
+        return parsed;
+      }
+      repeat = parsed.value;
+      continue;
+    }
+    if (arg.startsWith("-")) {
+      return { ok: false, error: `unknown benchmark-provider option: ${arg}` };
+    }
+    queryArgv.push(arg);
+  }
+
+  return { ok: true, queryArgv, repeat };
+}
+
+function parseProviderBenchmarkRepeat(value: string): { ok: true; value: number } | { ok: false; error: string } {
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed < 1) {
+    return { ok: false, error: "--repeat must be a positive integer" };
+  }
+  if (parsed > MAX_PROVIDER_BENCHMARK_REPEAT) {
+    return { ok: false, error: `--repeat must be ${MAX_PROVIDER_BENCHMARK_REPEAT} or less` };
+  }
+  return { ok: true, value: parsed };
+}
+
+function summarizeProviderBenchmark(iterations: ProviderBenchmarkIteration[]): Record<string, unknown> {
+  const successful = iterations.filter((iteration) => iteration.ok);
+  const selectedPaths = new Map<string, number>();
+  const providerCompleteDurations: number[] = [];
+  let totalTokens = 0;
+  let totalCost = 0;
+  let usageCount = 0;
+
+  for (const iteration of successful) {
+    const metadata = iteration.metadata ?? {};
+    const selectedPath = typeof metadata.selected_path === "string" ? metadata.selected_path : null;
+    if (selectedPath) {
+      selectedPaths.set(selectedPath, (selectedPaths.get(selectedPath) ?? 0) + 1);
+    }
+    const providerTimings = metadata.provider_timings;
+    if (isRecord(providerTimings) && typeof providerTimings.provider_complete_ms === "number") {
+      providerCompleteDurations.push(providerTimings.provider_complete_ms);
+    }
+    const providerUsage = metadata.provider_usage;
+    if (isRecord(providerUsage)) {
+      if (typeof providerUsage.total_tokens === "number") {
+        totalTokens += providerUsage.total_tokens;
+      }
+      if (typeof providerUsage.cost_total === "number") {
+        totalCost += providerUsage.cost_total;
+      }
+      usageCount += 1;
+    }
+  }
+
+  return {
+    iteration_count: iterations.length,
+    success_count: successful.length,
+    failure_count: iterations.length - successful.length,
+    selection_duration_ms: summarizeDurations(successful.map((iteration) => iteration.duration_ms)),
+    ...(providerCompleteDurations.length === 0
+      ? {}
+      : { provider_complete_ms: summarizeDurations(providerCompleteDurations) }),
+    selected_paths: Object.fromEntries([...selectedPaths.entries()].sort((left, right) => right[1] - left[1])),
+    ...(usageCount === 0
+      ? {}
+      : {
+          usage: {
+            total_tokens: totalTokens,
+            average_tokens: roundMs(totalTokens / usageCount),
+            cost_total: totalCost,
+            average_cost: totalCost / usageCount,
+          },
+        }),
+  };
+}
+
+function summarizeDurations(values: number[]): Record<string, number> | null {
+  if (values.length === 0) {
+    return null;
+  }
+  const sorted = [...values].sort((left, right) => left - right);
+  const total = sorted.reduce((sum, value) => sum + value, 0);
+  return {
+    min: roundMs(sorted[0] ?? 0),
+    p50: percentile(sorted, 0.5),
+    p95: percentile(sorted, 0.95),
+    max: roundMs(sorted.at(-1) ?? 0),
+    average: roundMs(total / sorted.length),
+  };
+}
+
+function percentile(sortedValues: number[], percentileValue: number): number {
+  if (sortedValues.length === 0) {
+    return 0;
+  }
+  const index = Math.ceil(sortedValues.length * percentileValue) - 1;
+  return roundMs(sortedValues[Math.max(0, Math.min(index, sortedValues.length - 1))] ?? 0);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 type DebugProviderTimingArgs =
@@ -761,6 +979,10 @@ async function measureRecoveryContext(deps: CliDeps): Promise<Record<string, unk
 
 function elapsedMs(start: number): number {
   return Math.max(0, Math.round((performance.now() - start) * 1000) / 1000);
+}
+
+function roundMs(value: number): number {
+  return Math.round(value * 1000) / 1000;
 }
 
 async function recoverCommand(deps: CliDeps): Promise<CommandResult> {
@@ -1596,6 +1818,8 @@ Usage:
                       Include local timing budget status in JSON
   zdr debug-provider-timing [query]
                       Measure live provider selection timing as JSON
+  zdr benchmark-provider [query] [--repeat <count>]
+                      Repeat live provider selection and summarize latency
   zdr doctor         Print setup diagnostics as JSON
   zdr config-provider <provider> <model>
                       Set provider.name and provider.model in config
@@ -1642,7 +1866,7 @@ function zshInitScript(): string {
     "",
     "zdr() {",
     "  case \"$1\" in",
-    "    init|record-z|finish-z|clear-recovery-retry|debug-state|debug-candidates|debug-select|debug-corrections|debug-config|debug-events|debug-timing|debug-provider-timing|doctor|config-provider|prune-events|forget|provider-smoke|provider-login|provider-logout|provider-auth-status|--*|-*)",
+    "    init|record-z|finish-z|clear-recovery-retry|debug-state|debug-candidates|debug-select|debug-corrections|debug-config|debug-events|debug-timing|debug-provider-timing|benchmark-provider|doctor|config-provider|prune-events|forget|provider-smoke|provider-login|provider-logout|provider-auth-status|--*|-*)",
     "      command zdr \"$@\"",
     "      return $?",
     "      ;;",
@@ -1713,7 +1937,7 @@ function bashInitScript(): string {
     "zdr() {",
     "  __zdr_inside_zdr=1",
     "  case \"$1\" in",
-    "    init|record-z|finish-z|clear-recovery-retry|debug-state|debug-candidates|debug-select|debug-corrections|debug-config|debug-events|debug-timing|debug-provider-timing|doctor|config-provider|prune-events|forget|provider-smoke|provider-login|provider-logout|provider-auth-status|--*|-*)",
+    "    init|record-z|finish-z|clear-recovery-retry|debug-state|debug-candidates|debug-select|debug-corrections|debug-config|debug-events|debug-timing|debug-provider-timing|benchmark-provider|doctor|config-provider|prune-events|forget|provider-smoke|provider-login|provider-logout|provider-auth-status|--*|-*)",
     "      command zdr \"$@\"",
     "      local __zdr_status=$?",
     "      __zdr_last_command=\"zdr-other\"",
@@ -1801,7 +2025,7 @@ function fishInitScript(): string {
     "",
     "function zdr",
     '    switch "$argv[1]"',
-    "        case init record-z finish-z clear-recovery-retry debug-state debug-candidates debug-select debug-corrections debug-config debug-events debug-timing debug-provider-timing doctor config-provider prune-events forget provider-smoke provider-login provider-logout provider-auth-status '--*' '-*'",
+    "        case init record-z finish-z clear-recovery-retry debug-state debug-candidates debug-select debug-corrections debug-config debug-events debug-timing debug-provider-timing benchmark-provider doctor config-provider prune-events forget provider-smoke provider-login provider-logout provider-auth-status '--*' '-*'",
     "            command zdr $argv",
     "            return $status",
     "    end",

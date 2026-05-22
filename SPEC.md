@@ -253,6 +253,8 @@ ZDR owns its OAuth credential store at `~/.config/zdr/auth.json`, written with `
 
 `zdr doctor` is a read-only local setup report. It must not make a live provider call. It reports config load status, provider/model lookup, provider auth readiness, required/optional command availability, and ZDR's config/auth/state/cache/telemetry paths.
 
+`zdr benchmark-provider [query] --repeat <count>` is an opt-in live-provider benchmark. It reuses one candidate context, repeats provider selection, and reports latency, usage, cost, and selected-path consistency. It is capped to avoid accidental spend.
+
 ### 8.2 Reasoning toggle
 
 Use model-specific reasoning controls only where the chosen provider/model supports them. First calls should prefer low latency. Second-call escalation may enable stronger reasoning if supported.

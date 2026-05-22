@@ -76,6 +76,7 @@ Verify local setup:
 zdr --version
 zdr doctor
 zdr provider-smoke
+zdr benchmark-provider ascan --repeat 5
 ```
 
 ## Shell Setup

@@ -56,7 +56,9 @@ bun run timing -- ascan
 bun run timing -- --repeat 25 --budget-ms 150 ascan
 ```
 
-`bun run timing` builds `dist/zdr`, runs `zdr debug-timing` repeatedly, and prints JSON with wall-clock p50/p95/max timings. Wall-clock timing includes executable startup; `command_total_ms` is the in-process diagnostic total. Use `zdr debug-provider-timing <query>` separately for live provider latency.
+`bun run timing` builds `dist/zdr`, runs `zdr debug-timing` repeatedly, and prints JSON with wall-clock p50/p95/max timings. Wall-clock timing includes executable startup; `command_total_ms` is the in-process diagnostic total.
+
+Use `zdr debug-provider-timing <query>` for one live provider selection trace. Use `zdr benchmark-provider <query> --repeat 5` to repeat the live provider selection against one candidate context and summarize selection latency, provider-complete latency when Pi reports it, token usage, cost, and selected-path consistency.
 
 ## Shell-State Smoke Test
 
