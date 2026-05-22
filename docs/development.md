@@ -11,6 +11,7 @@ Run checks:
 ```bash
 bun run verify
 bun run smoke
+bun run src/cli.ts doctor
 bun run src/cli.ts provider-smoke
 ```
 

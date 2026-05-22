@@ -74,6 +74,7 @@ Verify local setup:
 
 ```bash
 zdr --version
+zdr doctor
 zdr provider-smoke
 ```
 

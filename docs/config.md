@@ -44,9 +44,10 @@ Inspect the merged config:
 
 ```bash
 zdr debug-config
+zdr doctor
 ```
 
-`debug-config` reports whether values came from defaults or a file.
+`debug-config` reports whether values came from defaults or a file. `doctor` reports the same path plus provider/model and auth readiness.
 
 Set only the provider/model pair:
 

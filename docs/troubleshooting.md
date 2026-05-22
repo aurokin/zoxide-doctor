@@ -4,9 +4,12 @@
 
 ```bash
 zdr --version
+zdr doctor
 zdr provider-smoke
 zdr debug-config
 ```
+
+`zdr doctor` is a local JSON setup report. It checks config loading, provider/model lookup, provider auth readiness, `zoxide`, optional picker tools, and the paths ZDR uses for config, auth, state, cache, and telemetry.
 
 Run a live provider check:
 

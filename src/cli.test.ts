@@ -1162,6 +1162,104 @@ describe("main config commands", () => {
   });
 });
 
+describe("main doctor command", () => {
+  test("prints setup diagnostics without live provider calls", async () => {
+    expect(
+      await main(
+        ["doctor"],
+        testDeps({
+          loadConfig: async () =>
+            defaultLoadedConfig({
+              provider: {
+                name: "openrouter",
+                model: "google/gemini-2.5-flash-lite",
+              },
+            }),
+          commandExists: (command) => command === "fzf",
+        }),
+      ),
+    ).toEqual({ code: 1 });
+
+    const payload = JSON.parse(stdout.join("\n"));
+    expect(payload).toMatchObject({
+      schema_version: 1,
+      command: "doctor",
+      ok: false,
+      provider: {
+        name: "openrouter",
+        model: "google/gemini-2.5-flash-lite",
+        known_model: true,
+        auth: {
+          type: "env",
+        },
+      },
+      tools: {
+        zoxide: false,
+        fzf: true,
+        fd: false,
+      },
+      paths: {
+        config: expect.stringContaining("config.json"),
+        auth: expect.stringContaining("auth.json"),
+        last_z: expect.stringContaining("last_z.json"),
+        corrections: expect.stringContaining("corrections.json"),
+      },
+    });
+    expect(payload.checks.map((check: { name: string }) => check.name)).toContain("provider_auth");
+    expect(stderr).toEqual([]);
+  });
+
+  test("reports OAuth provider readiness", async () => {
+    expect(
+      await main(
+        ["doctor"],
+        testDeps({
+          loadConfig: async () =>
+            defaultLoadedConfig({
+              provider: {
+                name: "openai-codex",
+                model: "gpt-5.3-codex-spark",
+              },
+            }),
+          providerAuthStatuses: async () => [
+            {
+              provider: "openai-codex",
+              authenticated: true,
+              type: "oauth",
+              expired: false,
+              expires_at: "2026-06-01T00:00:00.000Z",
+              refresh_available: true,
+            },
+          ],
+          commandExists: (command) => command === "zoxide",
+        }),
+      ),
+    ).toEqual({ code: 0 });
+
+    expect(JSON.parse(stdout.join("\n"))).toMatchObject({
+      ok: true,
+      provider: {
+        name: "openai-codex",
+        model: "gpt-5.3-codex-spark",
+        known_model: true,
+        auth: {
+          type: "oauth",
+          authenticated: true,
+          expired: false,
+        },
+      },
+    });
+    expect(stderr).toEqual([]);
+  });
+
+  test("rejects doctor args", async () => {
+    expect(await main(["doctor", "--live"], testDeps())).toEqual({ code: 2 });
+
+    expect(stdout).toEqual([]);
+    expect(stderr).toEqual(["zdr: unknown doctor option: --live"]);
+  });
+});
+
 describe("main timing command", () => {
   test("prints local timing JSON with skipped cache lookup when query is omitted", async () => {
     expect(await main(["debug-timing"], testDeps())).toEqual({ code: 0 });
@@ -1755,6 +1853,7 @@ function testDeps(
     providerLogin?: (provider: string, callbacks: OAuthLoginCallbacks) => Promise<void>;
     providerLogout?: (provider: string) => Promise<boolean>;
     providerAuthStatuses?: (providers?: string[]) => Promise<ProviderAuthStatus[]>;
+    commandExists?: (command: string) => boolean;
   } = {},
 ) {
   return {
@@ -1803,6 +1902,7 @@ function testDeps(
       (async () => {
         throw new Error("unexpected provider auth status");
       }),
+    commandExists: input.commandExists ?? (() => false),
     cwd: () => tempDir,
     now: () => new Date("2026-05-18T00:00:00.000Z"),
   };
@@ -1898,7 +1998,7 @@ function runShellRuntimeTest(shellName: "zsh" | "bash", smokeLine: string, shell
 #!/usr/bin/env bash
 printf '%s\\n' "$*" >> "$ZDR_LOG"
 case "$1" in
-  record-z|finish-z|clear-recovery-retry|debug-state|debug-candidates|debug-select|debug-corrections|debug-events|debug-timing|debug-provider-timing|config-provider|prune-events|forget|init|--*|-*)
+  record-z|finish-z|clear-recovery-retry|debug-state|debug-candidates|debug-select|debug-corrections|debug-events|debug-timing|debug-provider-timing|doctor|config-provider|prune-events|forget|init|--*|-*)
     if [ "$1" = "--version" ]; then
       printf '0.0.0-test\\n'
     fi
@@ -1962,7 +2062,7 @@ function runFishRuntimeTest(fishScript: string): { skipped: boolean; output: str
 #!/usr/bin/env bash
 printf '%s\\n' "$*" >> "$ZDR_LOG"
 case "$1" in
-  record-z|finish-z|clear-recovery-retry|debug-state|debug-candidates|debug-select|debug-corrections|debug-events|debug-timing|debug-provider-timing|config-provider|prune-events|forget|init|--*|-*)
+  record-z|finish-z|clear-recovery-retry|debug-state|debug-candidates|debug-select|debug-corrections|debug-events|debug-timing|debug-provider-timing|doctor|config-provider|prune-events|forget|init|--*|-*)
     if [ "$1" = "--version" ]; then
       printf '0.0.0-test\\n'
     fi

@@ -3,8 +3,9 @@
 import packageJson from "../package.json" with { type: "json" };
 import { dirname, parse } from "node:path";
 import { buildCandidates, shouldAddLocalScanCandidates, type Candidate } from "./candidates.js";
-import { loadConfig, setProviderConfig, type LoadedConfig, type ZdrConfig } from "./config.js";
+import { getConfigPaths, loadConfig, setProviderConfig, type LoadedConfig, type ZdrConfig } from "./config.js";
 import {
+  getCachePaths,
   forgetCorrection,
   inspectCorrection,
   lookupCorrection,
@@ -16,6 +17,7 @@ import {
 } from "./corrections.js";
 import {
   clearRecoveryRetry,
+  getStatePaths,
   type FinishedZState,
   finishZAttempt,
   readLastZState,
@@ -68,6 +70,7 @@ type CliDeps = {
   providerLogin: (provider: string, callbacks: OAuthLoginCallbacks) => Promise<void>;
   providerLogout: (provider: string) => Promise<boolean>;
   providerAuthStatuses: (providers?: string[]) => Promise<ProviderAuthStatus[]>;
+  commandExists: (command: string) => boolean;
   cwd: () => string;
   now: () => Date;
 };
@@ -117,6 +120,8 @@ export async function main(argv: string[], deps: CliDeps = defaultDeps): Promise
       return debugTimingCommand(args, deps);
     case "debug-provider-timing":
       return debugProviderTimingCommand(args, deps);
+    case "doctor":
+      return doctorCommand(args, deps);
     case "config-provider":
       return configProviderCommand(args, deps);
     case "prune-events":
@@ -171,6 +176,7 @@ const defaultDeps: CliDeps = {
     const { getProviderAuthStatuses } = await import("./provider/auth.js");
     return getProviderAuthStatuses(providers);
   },
+  commandExists,
   cwd: () => process.cwd(),
   now: () => new Date(),
 };
@@ -1242,6 +1248,135 @@ async function providerSmokeCommand(args: string[], deps: CliDeps): Promise<Comm
   }
 }
 
+async function doctorCommand(args: string[], deps: CliDeps): Promise<CommandResult> {
+  if (args.length > 0) {
+    console.error(`zdr: unknown doctor option: ${args[0]}`);
+    return { code: 2 };
+  }
+
+  const configPaths = getConfigPaths();
+  const statePaths = getStatePaths();
+  const cachePaths = getCachePaths();
+  const { getAuthPath, isKnownOAuthProvider } = await import("./provider/auth.js");
+  const { getTelemetryPaths } = await import("./telemetry.js");
+  const telemetryPaths = getTelemetryPaths();
+  const checks: DoctorCheck[] = [];
+  let loaded: LoadedConfig | null = null;
+
+  try {
+    loaded = await deps.loadConfig();
+    checks.push({ name: "config", ok: true, message: loaded.source, path: loaded.path });
+  } catch (error) {
+    checks.push({
+      name: "config",
+      ok: false,
+      message: error instanceof Error ? error.message : String(error),
+      path: configPaths.config,
+    });
+  }
+
+  const provider = loaded?.config.provider ?? null;
+  let providerInfo: Record<string, unknown> | null = null;
+  if (provider) {
+    const { findEnvKeys } = await import("@earendil-works/pi-ai");
+    const { resolveConfiguredModel } = await import("./provider/model.js");
+    const model = await resolveConfiguredModel(provider);
+    checks.push({
+      name: "provider_model",
+      ok: model !== null,
+      message: model ? `${model.provider}/${model.id}` : `${provider.name}/${provider.model} not found`,
+    });
+
+    const envKeys = findEnvKeys(provider.name) ?? [];
+    const oauth = isKnownOAuthProvider(provider.name) ? (await deps.providerAuthStatuses([provider.name]))[0] : undefined;
+    const authOk = oauth ? oauth.authenticated && oauth.expired !== true : envKeys.length > 0;
+    checks.push({
+      name: "provider_auth",
+      ok: authOk,
+      message: oauth
+        ? oauth.authenticated
+          ? oauth.expired
+            ? "OAuth credentials expired"
+            : "OAuth credentials available"
+          : `run 'zdr provider-login ${provider.name}'`
+        : envKeys.length > 0
+          ? `env: ${envKeys.join(", ")}`
+          : `set provider API key for ${provider.name}`,
+    });
+
+    providerInfo = {
+      ...provider,
+      known_model: model !== null,
+      api: model?.api ?? null,
+      auth: oauth
+        ? {
+            type: "oauth",
+            authenticated: oauth.authenticated,
+            expired: oauth.expired ?? null,
+            expires_at: oauth.expires_at ?? null,
+            refresh_available: oauth.refresh_available ?? null,
+          }
+        : {
+            type: "env",
+            env_keys: envKeys,
+            authenticated: envKeys.length > 0,
+          },
+    };
+  }
+
+  const zoxideAvailable = deps.commandExists("zoxide");
+  checks.push({
+    name: "zoxide",
+    ok: zoxideAvailable,
+    message: zoxideAvailable ? "available" : "zoxide command not found",
+  });
+
+  const fzfAvailable = deps.commandExists("fzf");
+  const fdAvailable = deps.commandExists("fd");
+  const lastZ = await readLastZState().catch(() => null);
+  const requiredOk = checks.every((check) => check.ok);
+  console.log(
+    JSON.stringify(
+      {
+        schema_version: 1,
+        command: "doctor",
+        ok: requiredOk,
+        checks,
+        provider: providerInfo,
+        shell: {
+          detected: detectedShell(),
+          recorded_z_attempt: lastZ !== null,
+          note: "A child process cannot inspect whether the current shell has sourced `zdr init`; recorded_z_attempt shows whether shell integration has captured a z jump.",
+        },
+        tools: {
+          zoxide: zoxideAvailable,
+          fzf: fzfAvailable,
+          fd: fdAvailable,
+        },
+        paths: {
+          config: configPaths.config,
+          auth: getAuthPath(),
+          state_dir: statePaths.stateDir,
+          last_z: statePaths.lastZ,
+          recovery_retry: statePaths.recoveryRetry,
+          corrections: cachePaths.corrections,
+          telemetry_events: telemetryPaths.events,
+        },
+      },
+      null,
+      2,
+    ),
+  );
+  return { code: requiredOk ? 0 : 1 };
+}
+
+type DoctorCheck = {
+  name: string;
+  ok: boolean;
+  message: string;
+  path?: string;
+};
+
 async function configProviderCommand(args: string[], deps: CliDeps): Promise<CommandResult> {
   const parsed = parseConfigProviderArgs(args);
   if (!parsed.ok) {
@@ -1406,6 +1541,23 @@ function openBrowser(url: string): void {
   }
 }
 
+function commandExists(command: string): boolean {
+  const result = Bun.spawnSync({
+    cmd: ["bash", "-lc", `command -v "$1" >/dev/null`, "bash", command],
+    stdout: "ignore",
+    stderr: "ignore",
+  });
+  return result.exitCode === 0;
+}
+
+function detectedShell(): string {
+  const shell = process.env.SHELL;
+  if (!shell) {
+    return "unknown";
+  }
+  return shell.split("/").at(-1) || shell;
+}
+
 async function telemetryEnabledFromConfig(deps: CliDeps): Promise<boolean> {
   const envValue = process.env.ZDR_TELEMETRY;
   if (envValue && envValue.length > 0) {
@@ -1444,6 +1596,7 @@ Usage:
                       Include local timing budget status in JSON
   zdr debug-provider-timing [query]
                       Measure live provider selection timing as JSON
+  zdr doctor         Print setup diagnostics as JSON
   zdr config-provider <provider> <model>
                       Set provider.name and provider.model in config
   zdr prune-events [--max-events <count>]
@@ -1489,7 +1642,7 @@ function zshInitScript(): string {
     "",
     "zdr() {",
     "  case \"$1\" in",
-    "    init|record-z|finish-z|clear-recovery-retry|debug-state|debug-candidates|debug-select|debug-corrections|debug-config|debug-events|debug-timing|debug-provider-timing|config-provider|prune-events|forget|provider-smoke|provider-login|provider-logout|provider-auth-status|--*|-*)",
+    "    init|record-z|finish-z|clear-recovery-retry|debug-state|debug-candidates|debug-select|debug-corrections|debug-config|debug-events|debug-timing|debug-provider-timing|doctor|config-provider|prune-events|forget|provider-smoke|provider-login|provider-logout|provider-auth-status|--*|-*)",
     "      command zdr \"$@\"",
     "      return $?",
     "      ;;",
@@ -1560,7 +1713,7 @@ function bashInitScript(): string {
     "zdr() {",
     "  __zdr_inside_zdr=1",
     "  case \"$1\" in",
-    "    init|record-z|finish-z|clear-recovery-retry|debug-state|debug-candidates|debug-select|debug-corrections|debug-config|debug-events|debug-timing|debug-provider-timing|config-provider|prune-events|forget|provider-smoke|provider-login|provider-logout|provider-auth-status|--*|-*)",
+    "    init|record-z|finish-z|clear-recovery-retry|debug-state|debug-candidates|debug-select|debug-corrections|debug-config|debug-events|debug-timing|debug-provider-timing|doctor|config-provider|prune-events|forget|provider-smoke|provider-login|provider-logout|provider-auth-status|--*|-*)",
     "      command zdr \"$@\"",
     "      local __zdr_status=$?",
     "      __zdr_last_command=\"zdr-other\"",
@@ -1648,7 +1801,7 @@ function fishInitScript(): string {
     "",
     "function zdr",
     '    switch "$argv[1]"',
-    "        case init record-z finish-z clear-recovery-retry debug-state debug-candidates debug-select debug-corrections debug-config debug-events debug-timing debug-provider-timing config-provider prune-events forget provider-smoke provider-login provider-logout provider-auth-status '--*' '-*'",
+    "        case init record-z finish-z clear-recovery-retry debug-state debug-candidates debug-select debug-corrections debug-config debug-events debug-timing debug-provider-timing doctor config-provider prune-events forget provider-smoke provider-login provider-logout provider-auth-status '--*' '-*'",
     "            command zdr $argv",
     "            return $status",
     "    end",

@@ -251,6 +251,8 @@ ZDR owns its OAuth credential store at `~/.config/zdr/auth.json`, written with `
 
 `zdr config-provider <provider> <model>` updates only `provider.name` and `provider.model` in `~/.config/zdr/config.json` after validating that Pi knows the provider/model pair.
 
+`zdr doctor` is a read-only local setup report. It must not make a live provider call. It reports config load status, provider/model lookup, provider auth readiness, required/optional command availability, and ZDR's config/auth/state/cache/telemetry paths.
+
 ### 8.2 Reasoning toggle
 
 Use model-specific reasoning controls only where the chosen provider/model supports them. First calls should prefer low latency. Second-call escalation may enable stronger reasoning if supported.
