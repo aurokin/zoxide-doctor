@@ -4,10 +4,6 @@ import packageJson from "../package.json" with { type: "json" };
 import type { Candidate } from "./candidates.js";
 import { getConfigPaths, loadConfig, setProviderConfig, type LoadedConfig, type ZdrConfig } from "./config.js";
 import {
-  parseFinishZArgs,
-  parseRecordZArgs,
-} from "./cli-args.js";
-import {
   inspectCorrection,
   lookupCorrection,
   storeCorrection,
@@ -15,12 +11,7 @@ import {
   type CorrectionInspection,
   type CorrectionLookup,
 } from "./corrections.js";
-import {
-  clearRecoveryRetry,
-  type FinishedZState,
-  finishZAttempt,
-  recordZAttempt,
-} from "./shell-state.js";
+import type { FinishedZState } from "./shell-state.js";
 import { loadZoxideEntries, type ZoxideEntry } from "./zoxide.js";
 import type { PickerInput, PickerResult } from "./picker.js";
 import type { OAuthLoginCallbacks, ProviderAuthStatus } from "./provider/auth.js";
@@ -55,7 +46,12 @@ import {
 } from "./provider/commands.js";
 import type { ProviderReasoning, SelectionResult } from "./provider/select.js";
 import { scanLocalDirectories } from "./local-scan.js";
-import { bashInitScript, fishInitScript, zshInitScript } from "./shell-init.js";
+import {
+  clearRecoveryRetryCommand,
+  finishZCommand,
+  initCommand,
+  recordZCommand,
+} from "./shell-commands.js";
 import {
   appendTelemetryEvent,
   pruneTelemetryEvents,
@@ -209,66 +205,6 @@ const defaultDeps: CliDeps = {
   cwd: () => process.cwd(),
   now: () => new Date(),
 };
-
-function initCommand(args: string[]): CommandResult {
-  const [shell] = args;
-  switch (shell) {
-    case "zsh":
-      console.log(zshInitScript());
-      return { code: 0 };
-    case "bash":
-      console.log(bashInitScript());
-      return { code: 0 };
-    case "fish":
-      console.log(fishInitScript());
-      return { code: 0 };
-    default:
-      console.error("zdr: supported shells: zsh, bash, fish");
-      return { code: 2 };
-  }
-}
-
-async function recordZCommand(args: string[]): Promise<CommandResult> {
-  const parsed = parseRecordZArgs(args);
-  if (!parsed.ok) {
-    console.error(`zdr: ${parsed.error}`);
-    return { code: 2 };
-  }
-
-  await clearRecoveryRetry();
-  await recordZAttempt({
-    attemptId: parsed.attemptId,
-    beforePwd: parsed.beforePwd,
-    queryArgv: parsed.queryArgv,
-    ...(parsed.shell ? { shell: parsed.shell } : {}),
-  });
-  return { code: 0 };
-}
-
-async function clearRecoveryRetryCommand(): Promise<CommandResult> {
-  await clearRecoveryRetry();
-  return { code: 0 };
-}
-
-async function finishZCommand(args: string[]): Promise<CommandResult> {
-  const parsed = parseFinishZArgs(args);
-  if (!parsed.ok) {
-    console.error(`zdr: ${parsed.error}`);
-    return { code: 2 };
-  }
-
-  try {
-    await finishZAttempt({
-      attemptId: parsed.attemptId,
-      afterPwd: parsed.afterPwd,
-      exitStatus: parsed.exitStatus,
-    });
-    return { code: 0 };
-  } catch (error) {
-    console.error(`zdr: ${error instanceof Error ? error.message : String(error)}`);
-    return { code: 1 };
-  }
-}
 
 function commandExists(command: string): boolean {
   const result = Bun.spawnSync({
