@@ -102,4 +102,6 @@ Correction memory is separate from zoxide and does not change zoxide frecency sc
 
 Third-attempt picker fallback requires `fzf`. `fd` is optional and adds bounded local directory scan results when available.
 
-Picker `fd` scans are depth-limited and result-limited before results are sent to `fzf`; zoxide-ranked paths stay first.
+Picker `fd` scans use the configured context roots from `context.default_dir`, `context.include_dirs`, and `context.exclude_dirs`. Scans are depth-limited and result-limited before results are sent to `fzf`; zoxide-ranked paths stay first.
+
+If picker fallback or direct lookup feels slow, narrow the context scope in `~/.config/zdr/config.json`. Common exclusions include noisy or low-value trees such as `~/Library`, `~/.cache`, dependency caches, and private project directories that should not be scanned.

@@ -32,6 +32,8 @@ The install script rebuilds `dist/zdr`, replaces an existing `~/.local/bin/zdr` 
 
 The installed executable only prints the target path. The shell integration is what turns that path into `cd`, so source `zdr init <shell>` after zoxide init in any shell where you want navigation.
 
+To test a local provider or context-scope change end to end, run `bun run install:dev`, open a fresh shell, and verify that `command -v zdr` resolves to `~/.local/bin/zdr`.
+
 Run a live provider smoke test:
 
 ```bash

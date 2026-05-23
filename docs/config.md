@@ -1,6 +1,6 @@
 # Configuration
 
-Zoxide Doctor works without a config file. Create one when you want to override provider, privacy, or telemetry defaults.
+Zoxide Doctor works without a config file. Create one when you want to override provider, privacy, context, or telemetry defaults.
 
 Config path:
 
@@ -84,7 +84,7 @@ On a correction-cache miss, ZDR builds provider candidates from zoxide entries p
 2. Add every path in `context.include_dirs`.
 3. Remove every path under `context.exclude_dirs`.
 
-The provider still receives only the bounded candidate list, not a full filesystem dump.
+The provider still receives only the bounded candidate list, not a full filesystem dump. Local scan results are bounded per scan root before ZDR applies the final global cap, so explicit `include_dirs` still get represented when `context.default_dir` is broad.
 
 Example:
 

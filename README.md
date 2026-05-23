@@ -97,6 +97,8 @@ zdr benchmark-suite ascan
 zdr benchmark-suite ascan --jsonl
 ```
 
+See [Configuration](docs/config.md) for provider, privacy, and context tuning. See [Provider recommendations](docs/provider-recommendations.md) for dated benchmark notes before changing provider/model defaults.
+
 ## Shell Setup
 
 Initialize zoxide first, then source Zoxide Doctor's shell integration.
