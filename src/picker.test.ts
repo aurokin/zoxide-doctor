@@ -165,6 +165,102 @@ describe("runPicker", () => {
     ]);
   });
 
+  test("passes excluded scan roots to fd", async () => {
+    const commands: Array<{ command: string; args: string[]; stdin?: string }> = [];
+
+    expect(
+      await runPicker(
+        {
+          query: "ascan",
+          zoxideEntries: [{ path: "/repo/agentscan", score: 10, rank: 1 }],
+          scanRoots: ["/repo"],
+          excludeScanRoots: ["/repo/private"],
+        },
+        {
+          isCommandAvailable: async () => true,
+          runCommand: async (input): Promise<CommandOutput> => {
+            commands.push(input);
+            if (input.command === "fd") {
+              return { code: 0, stdout: "/repo/agentchat/\n/repo/private/agent-secret/\n", stderr: "" };
+            }
+            return { code: 0, stdout: "/repo/agentchat\n", stderr: "" };
+          },
+        },
+      ),
+    ).toEqual({ status: "selected", path: "/repo/agentchat" });
+
+    expect(commands[0]).toMatchObject({
+      command: "fd",
+      args: expect.arrayContaining(["--exclude", "/private"]),
+    });
+    expect(commands[1]?.stdin).toBe("/repo/agentscan\n/repo/agentchat\n");
+  });
+
+  test("scopes fd exclude args to each picker scan root", async () => {
+    const commands: Array<{ command: string; args: string[]; stdin?: string }> = [];
+
+    expect(
+      await runPicker(
+        {
+          query: "agent",
+          zoxideEntries: [{ path: "/repo/agentscan", score: 10, rank: 1 }],
+          scanRoots: ["/home", "/extra"],
+          excludeScanRoots: ["/extra/private"],
+        },
+        {
+          isCommandAvailable: async () => true,
+          runCommand: async (input): Promise<CommandOutput> => {
+            commands.push(input);
+            if (input.command === "fd" && input.args.includes("/home")) {
+              return { code: 0, stdout: "/home/private/agent-project\n", stderr: "" };
+            }
+            if (input.command === "fd") {
+              return { code: 0, stdout: "/extra/private/agent-secret\n", stderr: "" };
+            }
+            return { code: 0, stdout: "/home/private/agent-project\n", stderr: "" };
+          },
+        },
+      ),
+    ).toEqual({ status: "selected", path: "/home/private/agent-project" });
+
+    expect(commands[0]?.args).not.toContain("--exclude");
+    expect(commands[0]?.args).toContain("/home");
+    expect(commands[1]?.args).toEqual(expect.arrayContaining(["--exclude", "/private", "/extra"]));
+    expect(commands[2]?.stdin).toBe("/repo/agentscan\n/home/private/agent-project\n");
+  });
+
+  test("does not let the first picker scan root consume every fd result slot", async () => {
+    const commands: Array<{ command: string; args: string[]; stdin?: string }> = [];
+
+    expect(
+      await runPicker(
+        {
+          query: "agent",
+          zoxideEntries: [],
+          scanRoots: ["/home", "/extra"],
+          maxFdResults: 2,
+        },
+        {
+          isCommandAvailable: async () => true,
+          runCommand: async (input): Promise<CommandOutput> => {
+            commands.push(input);
+            if (input.command === "fd" && input.args.includes("/home")) {
+              return { code: 0, stdout: "/home/agent-one\n/home/agent-two\n", stderr: "" };
+            }
+            if (input.command === "fd") {
+              return { code: 0, stdout: "/extra/agent-work\n", stderr: "" };
+            }
+            return { code: 0, stdout: "/extra/agent-work\n", stderr: "" };
+          },
+        },
+      ),
+    ).toEqual({ status: "selected", path: "/extra/agent-work" });
+
+    expect(commands[0]?.args).toEqual(expect.arrayContaining(["--max-results", "1", "/home"]));
+    expect(commands[1]?.args).toEqual(expect.arrayContaining(["--max-results", "1", "/extra"]));
+    expect(commands[2]?.stdin).toBe("/home/agent-one\n/extra/agent-work\n");
+  });
+
   test("skips fd scan when fd is unavailable", async () => {
     const commands: Array<{ command: string; args: string[]; stdin?: string }> = [];
 

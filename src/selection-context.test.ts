@@ -1,24 +1,63 @@
 import { describe, expect, test } from "bun:test";
 import { join } from "node:path";
-import { buildSelectionCandidates, pickerScanRoots, type NavigationDeps } from "./selection-context.js";
+import {
+  buildSelectionCandidates,
+  configuredScanScope,
+  filterExcludedEntries,
+  pickerScanRoots,
+  type NavigationDeps,
+} from "./selection-context.js";
+import { DEFAULT_CONFIG } from "./config.js";
 import type { FinishedZState } from "./shell-state.js";
 
 describe("selection context", () => {
-  test("dedupes picker scan roots and filters broad home parents", () => {
+  test("defaults scan roots to the home directory", () => {
     const state = finishedState({
       before_pwd: "/Users/auro/code/wrong",
       after_pwd: "/Users/auro/code/agentscan",
     });
     const deps = depsWithCwd("/Users/auro/code");
+    const home = process.env.HOME;
+    if (!home) {
+      throw new Error("HOME is required for this test");
+    }
 
-    expect(pickerScanRoots(state, deps)).toEqual([
-      "/Users/auro/code",
-      "/Users/auro/code/wrong",
-      "/Users/auro/code/agentscan",
-    ]);
+    expect(pickerScanRoots(state, deps)).toEqual([home]);
   });
 
-  test("adds local scan candidates when zoxide candidates are weak", async () => {
+  test("applies default, includes, and excludes in order", () => {
+    const state = finishedState();
+    const deps = depsWithCwd("/Users/auro/code/zoxide-doctor");
+    const home = process.env.HOME;
+    if (!home) {
+      throw new Error("HOME is required for this test");
+    }
+
+    expect(
+      configuredScanScope(state, deps, {
+        default_dir: "~/code",
+        include_dirs: ["~/workspace", "/tmp/private/projects"],
+        exclude_dirs: ["~/code/private", "/tmp/private"],
+      }),
+    ).toEqual({
+      roots: [join(home, "code"), join(home, "workspace")],
+      excludeRoots: [join(home, "code/private"), "/tmp/private"],
+    });
+  });
+
+  test("filters zoxide entries inside excluded roots", () => {
+    expect(
+      filterExcludedEntries(
+        [
+          { path: "/repo/public", score: 10, rank: 1 },
+          { path: "/repo/private/secret", score: 9, rank: 2 },
+        ],
+        ["/repo/private"],
+      ),
+    ).toEqual([{ path: "/repo/public", score: 10, rank: 1 }]);
+  });
+
+  test("adds configured local scan candidates", async () => {
     const root = "/var/tmp/zdr-selection-context";
     const state = finishedState({
       before_pwd: root,
@@ -69,14 +108,8 @@ function depsWithCwd(cwd: string): NavigationDeps {
       path: join(cwd, "config.json"),
       source: "default",
       config: {
-        schema_version: 1,
-        provider: { name: "openrouter", model: "google/gemini-2.5-flash-lite" },
-        privacy: {
-          redact_home: true,
-          redact_emails: true,
-          redact_secrets: true,
-          redact_tokens: true,
-        },
+        ...DEFAULT_CONFIG,
+        context: { ...DEFAULT_CONFIG.context, default_dir: cwd },
         telemetry: { enabled: true, max_events: 1000 },
       },
     }),

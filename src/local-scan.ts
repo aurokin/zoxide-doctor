@@ -1,9 +1,11 @@
 import { spawn } from "node:child_process";
 import { normalize as normalizePath } from "node:path";
+import { fdExcludeArgs } from "./fd-excludes.js";
 
 export type LocalScanInput = {
   query: string;
   roots: string[];
+  excludeRoots?: string[];
   maxResults?: number;
   maxDepth?: number;
 };
@@ -24,6 +26,7 @@ const DEFAULT_MAX_DEPTH = 4;
 
 export async function scanLocalDirectories(input: LocalScanInput, deps: LocalScanDeps = {}): Promise<string[]> {
   const roots = uniqueText(input.roots).filter((root) => root.length > 0);
+  const excludeRoots = uniqueText(input.excludeRoots ?? []).filter((root) => root.length > 0);
   if (roots.length === 0) {
     return [];
   }
@@ -35,39 +38,58 @@ export async function scanLocalDirectories(input: LocalScanInput, deps: LocalSca
   }
 
   const maxResults = input.maxResults ?? DEFAULT_MAX_RESULTS;
+  if (maxResults <= 0) {
+    return [];
+  }
   const maxDepth = input.maxDepth ?? DEFAULT_MAX_DEPTH;
+  const perRootMaxResults = Math.max(1, Math.ceil(maxResults / roots.length));
   const paths: string[] = [];
   for (const pattern of scanPatterns(input.query)) {
-    const remaining = maxResults - uniqueText(paths).length;
-    if (remaining <= 0) {
-      break;
-    }
-    const output = await runCommand({
-      command: "fd",
-      args: [
-        "--type",
-        "d",
-        "--hidden",
-        "--color",
-        "never",
-        "--max-depth",
-        String(maxDepth),
-        "--max-results",
-        String(remaining),
-        pattern,
-        ...roots,
-      ],
-    });
-    if (output.code !== 0) {
-      continue;
-    }
-    paths.push(...output.stdout.split(/\r?\n/).filter((path) => path.length > 0).map(normalizeDirectoryPath));
-    if (uniqueText(paths).length >= maxResults) {
-      break;
+    for (const root of roots) {
+      const remaining = maxResults - uniqueText(paths).length;
+      if (remaining <= 0) {
+        break;
+      }
+      const commandMaxResults = Math.min(remaining, perRootMaxResults);
+      const output = await runCommand({
+        command: "fd",
+        args: [
+          "--type",
+          "d",
+          "--hidden",
+          "--color",
+          "never",
+          "--max-depth",
+          String(maxDepth),
+          ...fdExcludeArgs({ roots: [root], excludeRoots }),
+          "--max-results",
+          String(commandMaxResults),
+          pattern,
+          root,
+        ],
+      });
+      if (output.code !== 0) {
+        continue;
+      }
+      paths.push(
+        ...output.stdout
+          .split(/\r?\n/)
+          .filter((path) => path.length > 0)
+          .map(normalizeDirectoryPath)
+          .filter((path) => !isPathInsideAny(path, excludeRoots))
+          .slice(0, commandMaxResults),
+      );
+      if (uniqueText(paths).length >= maxResults) {
+        break;
+      }
     }
   }
 
   return uniqueText(paths).slice(0, maxResults);
+}
+
+function isPathInsideAny(path: string, roots: string[]): boolean {
+  return roots.some((root) => path === root || path.startsWith(`${root}/`));
 }
 
 function scanPatterns(query: string): string[] {

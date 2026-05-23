@@ -32,6 +32,11 @@ cat > "$config_dir/config.json" <<'JSON'
     "redact_secrets": true,
     "redact_tokens": true
   },
+  "context": {
+    "default_dir": "~",
+    "include_dirs": [],
+    "exclude_dirs": []
+  },
   "telemetry": {
     "enabled": false,
     "max_events": 1000
@@ -63,10 +68,38 @@ zdr config-provider openrouter google/gemini-2.5-flash-lite
 - `privacy.redact_emails`: redact email addresses in provider prompts.
 - `privacy.redact_secrets`: redact common secret-prefixed values in provider prompts.
 - `privacy.redact_tokens`: redact long token-like strings in provider prompts.
+- `context.default_dir`: default local scan root. The default is `~`.
+- `context.include_dirs`: extra local scan roots to include after `context.default_dir`.
+- `context.exclude_dirs`: local scan roots to exclude after default and include roots are applied.
 - `telemetry.enabled`: enable local JSONL telemetry. Default is `false`.
 - `telemetry.max_events`: default retention for `zdr prune-events`; must be an integer from `0` through `100000`.
 
-The v1 config is strict: unsupported keys at the top level or inside `provider`, `privacy`, or `telemetry` fail config loading instead of being ignored. This keeps misspelled settings from looking active.
+The v1 config is strict: unsupported keys at the top level or inside `provider`, `privacy`, `context`, or `telemetry` fail config loading instead of being ignored. This keeps misspelled settings from looking active.
+
+## Candidate Context
+
+On a correction-cache miss, ZDR builds provider candidates from zoxide entries plus bounded `fd` directory scan results when `fd` is available. The scan scope is applied in this order:
+
+1. Start from `context.default_dir`.
+2. Add every path in `context.include_dirs`.
+3. Remove every path under `context.exclude_dirs`.
+
+The provider still receives only the bounded candidate list, not a full filesystem dump.
+
+Example:
+
+```json
+{
+  "schema_version": 1,
+  "context": {
+    "default_dir": "~",
+    "include_dirs": ["/Volumes/work"],
+    "exclude_dirs": ["~/Library", "~/.cache", "~/code/private"]
+  }
+}
+```
+
+Paths may be absolute or use `~`. Relative paths are resolved from the current working directory.
 
 ## Provider and Model
 

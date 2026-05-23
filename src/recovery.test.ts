@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { recoverCommand } from "./recovery.js";
 import type { Candidate } from "./candidates.js";
+import { DEFAULT_CONFIG } from "./config.js";
 import type { NavigationDeps } from "./selection-context.js";
 import { finishZAttempt, recordZAttempt } from "./shell-state.js";
 import type { TelemetryInput } from "./telemetry.js";
@@ -179,14 +180,7 @@ function testDeps(overrides: Partial<NavigationDeps> = {}): NavigationDeps {
       path: join(tempDir, "config.json"),
       source: "default",
       config: {
-        schema_version: 1,
-        provider: { name: "openrouter", model: "google/gemini-2.5-flash-lite" },
-        privacy: {
-          redact_home: true,
-          redact_emails: true,
-          redact_secrets: true,
-          redact_tokens: true,
-        },
+        ...DEFAULT_CONFIG,
         telemetry: { enabled: true, max_events: 1000 },
       },
     }),

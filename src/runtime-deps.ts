@@ -37,7 +37,12 @@ export type CliDeps = {
   inspectCorrection: (query: string) => Promise<CorrectionInspection>;
   storeCorrection: (input: { query: string; path: string; now?: Date }) => Promise<CorrectionEntry>;
   loadZoxideEntries: () => Promise<ZoxideEntry[]>;
-  scanLocalDirectories: (input: { query: string; roots: string[]; maxResults?: number }) => Promise<string[]>;
+  scanLocalDirectories: (input: {
+    query: string;
+    roots: string[];
+    excludeRoots?: string[];
+    maxResults?: number;
+  }) => Promise<string[]>;
   selectCandidate: SelectCandidate;
   runPicker: (input: PickerInput) => Promise<PickerResult>;
   appendTelemetryEvent: (input: TelemetryInput) => Promise<unknown>;

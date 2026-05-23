@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { main } from "./cli.js";
 import type { Candidate } from "./candidates.js";
-import type { LoadedConfig } from "./config.js";
+import { DEFAULT_CONFIG, type LoadedConfig } from "./config.js";
 import type { CorrectionLookup } from "./corrections.js";
 import {
   inspectCorrection,
@@ -184,7 +184,7 @@ describe("main direct query mode", () => {
       path: join(tempDir, "config.json"),
       source: "file",
       config: {
-        schema_version: 1,
+        ...DEFAULT_CONFIG,
         provider: {
           name: "openrouter",
           model: "anthropic/claude-sonnet-4.5",
@@ -1082,21 +1082,8 @@ describe("main config commands", () => {
       path: join(tempDir, "config.json"),
       source: "default",
       config: {
-        schema_version: 1,
-        provider: {
-          name: "openrouter",
-          model: "google/gemini-2.5-flash-lite",
-        },
-        privacy: {
-          redact_home: true,
-          redact_emails: true,
-          redact_secrets: true,
-          redact_tokens: true,
-        },
-        telemetry: {
-          enabled: true,
-          max_events: 1000,
-        },
+        ...DEFAULT_CONFIG,
+        telemetry: { enabled: true, max_events: 1000 },
       },
     };
 
@@ -1991,7 +1978,7 @@ describe("main recovery routing", () => {
         ...testDeps({
           scanLocalDirectories: async (input) => {
             expect(input.query).toBe("ascan");
-            expect(input.roots).toEqual([tempDir, beforeDir, wrongDir]);
+            expect(input.roots).toEqual([tempDir]);
             return [selected];
           },
         }),
@@ -2103,7 +2090,8 @@ describe("main recovery routing", () => {
                 { path: selected, score: 8, rank: 3 },
               ],
               rejectedPaths: [first, second],
-              scanRoots: [tempDir, beforeDir, wrongDir],
+              scanRoots: [tempDir],
+              excludeScanRoots: [],
             });
             return { status: "selected", path: selected };
           },
@@ -2199,17 +2187,30 @@ describe("main recovery routing", () => {
     ]);
   });
 
-  test("third no-arg recovery filters broad picker scan parents", async () => {
+  test("third no-arg recovery uses configured picker scan roots", async () => {
     const selected = join(tempDir, "agentscan");
+    const extraRoot = join(tempDir, "extra");
+    const excludedRoot = join(tempDir, "private");
     await mkdir(selected);
+    await mkdir(extraRoot);
+    await mkdir(excludedRoot);
     await recordFinishedZAttempt("recovery-broad-roots", "/Users/auro/wrong", ["ascan"], { beforePath: "/Users/auro" });
     await seedRejectedRecoveryPaths(["/repo/wrong-1", "/repo/wrong-2"]);
 
     expect(
       await main([], {
         ...testDeps({
+          loadConfig: async () =>
+            defaultLoadedConfig({
+              context: {
+                default_dir: tempDir,
+                include_dirs: [extraRoot, excludedRoot],
+                exclude_dirs: [excludedRoot],
+              },
+            }),
           runPicker: async (input) => {
-            expect(input.scanRoots).toEqual([tempDir, "/Users/auro", "/Users/auro/wrong"]);
+            expect(input.scanRoots).toEqual([tempDir, extraRoot]);
+            expect(input.excludeScanRoots).toEqual([excludedRoot]);
             return { status: "selected", path: selected };
           },
         }),
@@ -2314,21 +2315,9 @@ function testDeps(
 
 function defaultLoadedConfig(overrides: Partial<LoadedConfig["config"]> = {}): LoadedConfig {
   const base: LoadedConfig["config"] = {
-    schema_version: 1,
-    provider: {
-      name: "openrouter",
-      model: "google/gemini-2.5-flash-lite",
-    },
-    privacy: {
-      redact_home: true,
-      redact_emails: true,
-      redact_secrets: true,
-      redact_tokens: true,
-    },
-    telemetry: {
-      enabled: true,
-      max_events: 1000,
-    },
+    ...DEFAULT_CONFIG,
+    context: { ...DEFAULT_CONFIG.context, default_dir: tempDir },
+    telemetry: { enabled: true, max_events: 1000 },
   };
   return {
     path: join(tempDir, "config.json"),
@@ -2343,6 +2332,10 @@ function defaultLoadedConfig(overrides: Partial<LoadedConfig["config"]> = {}): L
       privacy: {
         ...base.privacy,
         ...overrides.privacy,
+      },
+      context: {
+        ...base.context,
+        ...overrides.context,
       },
       telemetry: {
         ...base.telemetry,

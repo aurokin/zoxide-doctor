@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 import { normalize as normalizePath } from "node:path";
+import { fdExcludeArgs } from "./fd-excludes.js";
 import type { ZoxideEntry } from "./zoxide.js";
 
 export type PickerResult =
@@ -12,6 +13,7 @@ export type PickerInput = {
   zoxideEntries: ZoxideEntry[];
   rejectedPaths?: string[];
   scanRoots?: string[];
+  excludeScanRoots?: string[];
   maxFdResults?: number;
   maxFdDepth?: number;
 };
@@ -42,6 +44,7 @@ export async function runPicker(input: PickerInput, deps: PickerDeps = {}): Prom
     input.scanRoots && input.scanRoots.length > 0 && (await isCommandAvailable("fd"))
       ? await loadFdPaths(
           input.scanRoots,
+          input.excludeScanRoots ?? [],
           input.maxFdResults ?? DEFAULT_MAX_FD_RESULTS,
           runCommand,
           input.maxFdDepth ?? DEFAULT_MAX_FD_DEPTH,
@@ -104,39 +107,74 @@ export function buildPickerPaths(input: {
 
 async function loadFdPaths(
   scanRoots: string[],
+  excludeScanRoots: string[],
   maxResults: number,
   runCommand: NonNullable<PickerDeps["runCommand"]>,
   maxDepth = DEFAULT_MAX_FD_DEPTH,
 ): Promise<string[]> {
-  const output = await runCommand({
-    command: "fd",
-    args: [
-      "--type",
-      "d",
-      "--hidden",
-      "--color",
-      "never",
-      "--max-depth",
-      String(maxDepth),
-      "--max-results",
-      String(maxResults),
-      ".",
-      ...scanRoots,
-    ],
-  });
-  if (output.code !== 0) {
+  if (maxResults <= 0) {
     return [];
   }
-  return output.stdout
-    .split(/\r?\n/)
-    .filter((path) => path.length > 0)
-    .map(normalizeDirectoryPath)
-    .slice(0, maxResults);
+  const perRootMaxResults = Math.max(1, Math.ceil(maxResults / scanRoots.length));
+  const paths: string[] = [];
+  for (const root of scanRoots) {
+    const remaining = maxResults - uniqueText(paths).length;
+    if (remaining <= 0) {
+      break;
+    }
+    const commandMaxResults = Math.min(remaining, perRootMaxResults);
+    const output = await runCommand({
+      command: "fd",
+      args: [
+        "--type",
+        "d",
+        "--hidden",
+        "--color",
+        "never",
+        "--max-depth",
+        String(maxDepth),
+        ...fdExcludeArgs({ roots: [root], excludeRoots: excludeScanRoots }),
+        "--max-results",
+        String(commandMaxResults),
+        ".",
+        root,
+      ],
+    });
+    if (output.code !== 0) {
+      continue;
+    }
+    paths.push(
+      ...output.stdout
+        .split(/\r?\n/)
+        .filter((path) => path.length > 0)
+        .map(normalizeDirectoryPath)
+        .filter((path) => !isPathInsideAny(path, excludeScanRoots))
+        .slice(0, commandMaxResults),
+    );
+  }
+  return uniqueText(paths).slice(0, maxResults);
 }
 
 function normalizeDirectoryPath(path: string): string {
   const normalized = normalizePath(path);
   return normalized.length > 1 ? normalized.replace(/[\\/]+$/, "") : normalized;
+}
+
+function isPathInsideAny(path: string, roots: string[]): boolean {
+  return roots.some((root) => path === root || path.startsWith(`${root}/`));
+}
+
+function uniqueText(values: string[]): string[] {
+  const result: string[] = [];
+  const seen = new Set<string>();
+  for (const value of values) {
+    if (seen.has(value)) {
+      continue;
+    }
+    seen.add(value);
+    result.push(value);
+  }
+  return result;
 }
 
 async function commandAvailable(

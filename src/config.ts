@@ -13,6 +13,11 @@ export type ZdrConfig = {
     redact_secrets: boolean;
     redact_tokens: boolean;
   };
+  context: {
+    default_dir: string;
+    include_dirs: string[];
+    exclude_dirs: string[];
+  };
   telemetry: {
     enabled: boolean;
     max_events: number;
@@ -42,15 +47,21 @@ export const DEFAULT_CONFIG: ZdrConfig = {
     redact_secrets: true,
     redact_tokens: true,
   },
+  context: {
+    default_dir: "~",
+    include_dirs: [],
+    exclude_dirs: [],
+  },
   telemetry: {
     enabled: false,
     max_events: 1000,
   },
 };
 
-const TOP_LEVEL_KEYS = ["schema_version", "provider", "privacy", "telemetry"];
+const TOP_LEVEL_KEYS = ["schema_version", "provider", "privacy", "context", "telemetry"];
 const PROVIDER_KEYS = ["name", "model"];
 const PRIVACY_KEYS = ["redact_home", "redact_emails", "redact_secrets", "redact_tokens"];
+const CONTEXT_KEYS = ["default_dir", "include_dirs", "exclude_dirs"];
 const TELEMETRY_KEYS = ["enabled", "max_events"];
 const MAX_TELEMETRY_EVENTS = 100_000;
 
@@ -115,9 +126,11 @@ function mergeConfig(raw: unknown): ZdrConfig {
 
   const provider = optionalRecord(raw.provider, "provider");
   const privacy = optionalRecord(raw.privacy, "privacy");
+  const context = optionalRecord(raw.context, "context");
   const telemetry = optionalRecord(raw.telemetry, "telemetry");
   rejectUnknownKeys(provider, PROVIDER_KEYS, "config provider");
   rejectUnknownKeys(privacy, PRIVACY_KEYS, "config privacy");
+  rejectUnknownKeys(context, CONTEXT_KEYS, "config context");
   rejectUnknownKeys(telemetry, TELEMETRY_KEYS, "config telemetry");
 
   return {
@@ -131,6 +144,11 @@ function mergeConfig(raw: unknown): ZdrConfig {
       redact_emails: optionalBoolean(privacy.redact_emails, DEFAULT_CONFIG.privacy.redact_emails, "privacy.redact_emails"),
       redact_secrets: optionalBoolean(privacy.redact_secrets, DEFAULT_CONFIG.privacy.redact_secrets, "privacy.redact_secrets"),
       redact_tokens: optionalBoolean(privacy.redact_tokens, DEFAULT_CONFIG.privacy.redact_tokens, "privacy.redact_tokens"),
+    },
+    context: {
+      default_dir: optionalString(context.default_dir, DEFAULT_CONFIG.context.default_dir, "context.default_dir"),
+      include_dirs: optionalStringArray(context.include_dirs, DEFAULT_CONFIG.context.include_dirs, "context.include_dirs"),
+      exclude_dirs: optionalStringArray(context.exclude_dirs, DEFAULT_CONFIG.context.exclude_dirs, "context.exclude_dirs"),
     },
     telemetry: {
       enabled: optionalBoolean(telemetry.enabled, DEFAULT_CONFIG.telemetry.enabled, "telemetry.enabled"),
@@ -157,6 +175,21 @@ function optionalString(value: unknown, fallback: string, key: string): string {
     throw new Error(`config ${key} must be a non-empty string`);
   }
   return value;
+}
+
+function optionalStringArray(value: unknown, fallback: string[], key: string): string[] {
+  if (value === undefined) {
+    return [...fallback];
+  }
+  if (!Array.isArray(value)) {
+    throw new Error(`config ${key} must be an array of non-empty strings`);
+  }
+  return value.map((entry, index) => {
+    if (typeof entry !== "string" || entry.trim().length === 0) {
+      throw new Error(`config ${key}[${index}] must be a non-empty string`);
+    }
+    return entry;
+  });
 }
 
 function optionalBoolean(value: unknown, fallback: boolean, key: string): boolean {

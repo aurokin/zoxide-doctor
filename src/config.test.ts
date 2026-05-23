@@ -52,6 +52,11 @@ describe("config", () => {
           ...DEFAULT_CONFIG.provider,
           model: "anthropic/claude-sonnet-4.5",
         },
+        context: {
+          default_dir: "~",
+          include_dirs: [],
+          exclude_dirs: [],
+        },
         telemetry: {
           enabled: true,
           max_events: 25,
@@ -105,6 +110,36 @@ describe("config", () => {
     });
 
     await expect(loadConfig()).rejects.toThrow("config provider contains unsupported key: timeout_ms");
+  });
+
+  test("loads context scan scope settings", async () => {
+    await writeConfig({
+      context: {
+        default_dir: "~/code",
+        include_dirs: ["/Volumes/work"],
+        exclude_dirs: ["~/code/private"],
+      },
+    });
+
+    await expect(loadConfig()).resolves.toMatchObject({
+      config: {
+        context: {
+          default_dir: "~/code",
+          include_dirs: ["/Volumes/work"],
+          exclude_dirs: ["~/code/private"],
+        },
+      },
+    });
+  });
+
+  test("rejects invalid context arrays", async () => {
+    await writeConfig({
+      context: {
+        include_dirs: ["/repo", ""],
+      },
+    });
+
+    await expect(loadConfig()).rejects.toThrow("config context.include_dirs[1] must be a non-empty string");
   });
 
   test("sets provider config while preserving other settings", async () => {

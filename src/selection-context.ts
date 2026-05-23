@@ -1,6 +1,6 @@
-import { dirname, parse } from "node:path";
+import { isAbsolute, normalize, resolve } from "node:path";
 import { buildCandidates, shouldAddLocalScanCandidates, type Candidate } from "./candidates.js";
-import type { LoadedConfig, ZdrConfig } from "./config.js";
+import { DEFAULT_CONFIG, type LoadedConfig, type ZdrConfig } from "./config.js";
 import type { CorrectionEntry, CorrectionLookup } from "./corrections.js";
 import type { PickerInput, PickerResult } from "./picker.js";
 import type { ProviderReasoning, SelectionResult } from "./provider/select.js";
@@ -16,7 +16,12 @@ export type NavigationDeps = {
   lookupCorrection: (query: string) => Promise<CorrectionLookup>;
   storeCorrection: (input: { query: string; path: string; now?: Date }) => Promise<CorrectionEntry>;
   loadZoxideEntries: () => Promise<ZoxideEntry[]>;
-  scanLocalDirectories: (input: { query: string; roots: string[]; maxResults?: number }) => Promise<string[]>;
+  scanLocalDirectories: (input: {
+    query: string;
+    roots: string[];
+    excludeRoots?: string[];
+    maxResults?: number;
+  }) => Promise<string[]>;
   selectCandidate: (input: {
     state: FinishedZState;
     candidates: Candidate[];
@@ -39,18 +44,22 @@ export async function buildSelectionCandidates(input: {
   rejectedPaths: string[];
   deps: NavigationDeps;
 }): Promise<Candidate[]> {
+  const config = (await input.deps.loadConfig()).config;
+  const scope = configuredScanScope(input.state, input.deps, config.context);
+  const entries = filterExcludedEntries(input.entries, scope.excludeRoots);
   const baseCandidates = buildCandidates({
     state: input.state,
-    entries: input.entries,
+    entries,
     limit: input.limit,
     rejectedPaths: input.rejectedPaths,
   });
-  if (!shouldAddLocalScanCandidates(baseCandidates)) {
+  if (!shouldAddLocalScanCandidates(baseCandidates) && scope.roots.length === 0) {
     return baseCandidates;
   }
   const localPaths = await input.deps.scanLocalDirectories({
     query: input.state.query_argv.join(" ").trim(),
-    roots: pickerScanRoots(input.state, input.deps),
+    roots: scope.roots,
+    excludeRoots: scope.excludeRoots,
     maxResults: 50,
   });
   if (localPaths.length === 0) {
@@ -58,29 +67,45 @@ export async function buildSelectionCandidates(input: {
   }
   return buildCandidates({
     state: input.state,
-    entries: input.entries,
+    entries,
     localPaths,
     limit: input.limit,
     rejectedPaths: input.rejectedPaths,
   });
 }
 
-export function pickerScanRoots(state: FinishedZState, deps: NavigationDeps): string[] {
-  const candidates = [
-    deps.cwd(),
-    state.before_pwd,
-    state.after_pwd,
-  ];
-  for (const path of [state.before_pwd, state.after_pwd]) {
-    if (path.length === 0) {
-      continue;
-    }
-    const parent = dirname(path);
-    if (isSpecificScanRoot(parent)) {
-      candidates.push(parent);
-    }
+export type ConfiguredScanScope = {
+  roots: string[];
+  excludeRoots: string[];
+};
+
+export function configuredScanScope(
+  _state: FinishedZState,
+  deps: Pick<NavigationDeps, "cwd">,
+  context: ZdrConfig["context"] = DEFAULT_CONFIG.context,
+): ConfiguredScanScope {
+  const excludeRoots = uniqueExistingText(context.exclude_dirs.map((path) => resolveConfiguredPath(path, deps)));
+  const roots = uniqueExistingText([
+    resolveConfiguredPath(context.default_dir, deps),
+    ...context.include_dirs.map((path) => resolveConfiguredPath(path, deps)),
+  ]).filter((path) => !isPathInsideAny(path, excludeRoots));
+
+  return { roots, excludeRoots };
+}
+
+export function pickerScanRoots(
+  state: FinishedZState,
+  deps: NavigationDeps,
+  context: ZdrConfig["context"] = DEFAULT_CONFIG.context,
+): string[] {
+  return configuredScanScope(state, deps, context).roots;
+}
+
+export function filterExcludedEntries(entries: ZoxideEntry[], excludeRoots: string[]): ZoxideEntry[] {
+  if (excludeRoots.length === 0) {
+    return entries;
   }
-  return uniqueExistingText(candidates);
+  return entries.filter((entry) => !isPathInsideAny(normalizeDirectoryPath(entry.path), excludeRoots));
 }
 
 function uniqueExistingText(values: string[]): string[] {
@@ -96,21 +121,28 @@ function uniqueExistingText(values: string[]): string[] {
   return result;
 }
 
-function isSpecificScanRoot(path: string): boolean {
-  const parsed = parse(path);
-  if (path === parsed.root) {
-    return false;
+function resolveConfiguredPath(path: string, deps: Pick<NavigationDeps, "cwd">): string {
+  if (path === "~") {
+    return normalizeDirectoryPath(homeDir());
   }
-  const relative = path.slice(parsed.root.length);
-  const segments = relative.split("/").filter((segment) => segment.length > 0);
-  if (segments.length < 2) {
-    return false;
+  if (path.startsWith("~/")) {
+    return normalizeDirectoryPath(resolve(homeDir(), path.slice(2)));
   }
-  if (segments.length === 2 && (segments[0] === "Users" || segments[0] === "home")) {
-    return false;
+  return normalizeDirectoryPath(isAbsolute(path) ? path : resolve(deps.cwd(), path));
+}
+
+function homeDir(): string {
+  if (process.env.HOME && process.env.HOME.length > 0) {
+    return process.env.HOME;
   }
-  if (segments.length === 1 && (segments[0] === "tmp" || segments[0] === "var")) {
-    return false;
-  }
-  return true;
+  throw new Error("HOME is required to resolve configured context paths");
+}
+
+function normalizeDirectoryPath(path: string): string {
+  const normalized = normalize(path);
+  return normalized.length > 1 ? normalized.replace(/[\\/]+$/, "") : normalized;
+}
+
+function isPathInsideAny(path: string, roots: string[]): boolean {
+  return roots.some((root) => path === root || path.startsWith(`${root}/`));
 }

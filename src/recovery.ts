@@ -2,7 +2,8 @@ import type { SelectionResult } from "./provider/select.js";
 import { summarizeProviderUsage } from "./provider/usage.js";
 import {
   buildSelectionCandidates,
-  pickerScanRoots,
+  configuredScanScope,
+  filterExcludedEntries,
   type NavigationCommandResult,
   type NavigationDeps,
 } from "./selection-context.js";
@@ -113,12 +114,15 @@ async function pickerRecoveryCommand(
   start: number,
 ): Promise<NavigationCommandResult> {
   const entries = await deps.loadZoxideEntries();
+  const config = (await deps.loadConfig()).config;
+  const scope = configuredScanScope(state, deps, config.context);
   console.error("zdr: opening picker...");
   const result = await deps.runPicker({
     query: state.query_argv.join(" "),
-    zoxideEntries: entries,
+    zoxideEntries: filterExcludedEntries(entries, scope.excludeRoots),
     rejectedPaths: retry.rejected_paths,
-    scanRoots: pickerScanRoots(state, deps),
+    scanRoots: scope.roots,
+    excludeScanRoots: scope.excludeRoots,
   });
   switch (result.status) {
     case "selected":

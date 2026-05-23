@@ -25,7 +25,7 @@ Implemented:
 - local correction cache for direct-query hits.
 - local opt-in telemetry and provider usage accounting.
 - OAuth login for Pi OAuth providers such as `openai-codex`.
-- strict v1 config with provider, privacy, and telemetry settings.
+- strict v1 config with provider, privacy, context, and telemetry settings.
 - curl-based release installer.
 
 Not implemented yet:
@@ -136,7 +136,7 @@ zdr
 
 First no-arg recovery requests minimal reasoning effort through Pi when the configured model/provider supports reasoning controls. If the first repair is also wrong, run `zdr` again. The second no-arg recovery excludes the previous `zdr` suggestion and requests high reasoning effort. Unsupported models ignore those options through Pi.
 
-If the second repair is wrong too, run `zdr` a third time. The third recovery opens an `fzf` picker seeded with the original query, zoxide-ranked candidates, and optional `fd` scan results from the current recovery context.
+If the second repair is wrong too, run `zdr` a third time. The third recovery opens an `fzf` picker seeded with the original query, zoxide-ranked candidates, and optional `fd` scan results from the configured context roots.
 
 Experimental direct lookup:
 
@@ -144,7 +144,7 @@ Experimental direct lookup:
 zdr ascan
 ```
 
-`zdr <query>` checks the local correction cache first. On a cache miss or stale path, it falls back to zoxide candidates plus model selection. High-confidence model selections are stored for future exact-query cache hits.
+`zdr <query>` checks the local correction cache first. On a cache miss or stale path, it falls back to zoxide candidates, bounded local directory scan results from the configured context roots, and model selection. High-confidence model selections are stored for future exact-query cache hits.
 
 Correction-cache commands:
 

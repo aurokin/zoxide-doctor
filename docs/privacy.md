@@ -2,6 +2,8 @@
 
 Zoxide Doctor sends only model-selection context to the configured provider. Shell navigation state, correction memory, and telemetry are stored locally.
 
+On a correction-cache miss, provider context can include zoxide-ranked candidate paths and bounded local directory scan results from the configured context roots. The default context root is `~`; use `context.include_dirs` and `context.exclude_dirs` when you need to broaden or narrow the scan scope.
+
 ## Provider Prompts
 
 Before provider calls, prompt construction applies the configured privacy redaction settings:
