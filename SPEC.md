@@ -257,6 +257,8 @@ ZDR owns its OAuth credential store at `~/.config/zdr/auth.json`, written with `
 
 `zdr benchmark-suite [query] --repeat <count>` runs the same benchmark context across provider/model pairs. By default it tests only the configured provider so the diagnostic does not fail because optional providers are unavailable. Additional `--provider provider:model` arguments replace the default suite for explicit comparisons.
 
+Provider benchmark commands support `--jsonl` for long-running diagnostics. JSONL mode emits one event per line: context first, iteration results as provider calls finish, and summary events at the end.
+
 ### 8.2 Reasoning toggle
 
 Use model-specific reasoning controls only where the chosen provider/model supports them. First calls should prefer low latency. Second-call escalation may enable stronger reasoning if supported.

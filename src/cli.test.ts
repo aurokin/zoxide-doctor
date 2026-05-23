@@ -1576,6 +1576,48 @@ describe("main timing command", () => {
     expect(stderr).toEqual([]);
   });
 
+  test("streams provider benchmark JSONL", async () => {
+    const selected = join(tempDir, "agentscan");
+
+    expect(
+      await main(["benchmark-provider", "--jsonl", "--repeat=2", "ascan"], {
+        ...testDeps(),
+        loadZoxideEntries: async () => [{ path: selected, score: 10, rank: 1 }],
+        selectCandidate: async ({ candidates }) => selectionResult(candidates[0] ?? null),
+      }),
+    ).toEqual({ code: 0 });
+
+    const events = stdout.map((line) => JSON.parse(line) as Record<string, unknown>);
+    expect(events.map((event) => event.event)).toEqual(["context", "iteration", "iteration", "summary"]);
+    expect(events[0]).toMatchObject({
+      schema_version: 1,
+      command: "benchmark-provider",
+      event: "context",
+      query: "ascan",
+      repeat: 2,
+      provider: { name: "openrouter", model: "google/gemini-2.5-flash-lite" },
+    });
+    expect(events[1]).toMatchObject({
+      command: "benchmark-provider",
+      event: "iteration",
+      provider: { name: "openrouter", model: "google/gemini-2.5-flash-lite" },
+      iteration: {
+        index: 1,
+        ok: true,
+      },
+    });
+    expect(events[3]).toMatchObject({
+      command: "benchmark-provider",
+      event: "summary",
+      ok: true,
+      summary: {
+        iteration_count: 2,
+        success_count: 2,
+      },
+    });
+    expect(stderr).toEqual([]);
+  });
+
   test("benchmarks the configured provider by default against one candidate context", async () => {
     const selected = join(tempDir, "agentscan");
     const providerCalls: Array<{ name: string; model: string }> = [];
@@ -1685,6 +1727,58 @@ describe("main timing command", () => {
     expect(payload.benchmarks[1]?.iterations[0]).toMatchObject({
       ok: false,
       error: "provider unavailable",
+    });
+    expect(stderr).toEqual([]);
+  });
+
+  test("streams benchmark suite JSONL", async () => {
+    const selected = join(tempDir, "agentscan");
+
+    expect(
+      await main(
+        [
+          "benchmark-suite",
+          "--jsonl",
+          "--provider=openai-codex:gpt-5.3-codex-spark",
+          "--provider=openrouter:google/gemini-2.5-flash-lite",
+          "ascan",
+        ],
+        {
+          ...testDeps(),
+          loadZoxideEntries: async () => [{ path: selected, score: 10, rank: 1 }],
+          selectCandidate: async ({ candidates }) => selectionResult(candidates[0] ?? null),
+        },
+      ),
+    ).toEqual({ code: 0 });
+
+    const events = stdout.map((line) => JSON.parse(line) as Record<string, unknown>);
+    expect(events.map((event) => event.event)).toEqual([
+      "context",
+      "iteration",
+      "provider-summary",
+      "iteration",
+      "provider-summary",
+      "summary",
+    ]);
+    expect(events[0]).toMatchObject({
+      command: "benchmark-suite",
+      event: "context",
+      query: "ascan",
+      providers: [
+        { name: "openai-codex", model: "gpt-5.3-codex-spark" },
+        { name: "openrouter", model: "google/gemini-2.5-flash-lite" },
+      ],
+    });
+    expect(events[2]).toMatchObject({
+      command: "benchmark-suite",
+      event: "provider-summary",
+      provider: { name: "openai-codex", model: "gpt-5.3-codex-spark" },
+      ok: true,
+    });
+    expect(events[5]).toMatchObject({
+      command: "benchmark-suite",
+      event: "summary",
+      ok: true,
     });
     expect(stderr).toEqual([]);
   });

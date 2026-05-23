@@ -75,6 +75,8 @@ zdr benchmark-suite ascan --repeat 3 \
   --provider openrouter:google/gemini-2.5-flash-lite
 ```
 
+Add `--jsonl` to either benchmark command to stream context, per-iteration results, and summaries as line-delimited JSON while the benchmark is still running.
+
 ## Shell-State Smoke Test
 
 ```bash
