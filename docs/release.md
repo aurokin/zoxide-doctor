@@ -14,9 +14,10 @@ Each release also includes `SHA256SUMS`.
 Before tagging, run:
 
 ```bash
-bun run verify
-bun run release:build
+bun run release:prepare
 ```
+
+This verifies the project, builds release archives, generates `Formula/zoxide-doctor.rb`, checks Ruby syntax, and runs `brew style` when Homebrew is available.
 
 ## Installer
 

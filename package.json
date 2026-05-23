@@ -24,6 +24,7 @@
     "release:check-version": "bun run scripts/check-release-version.ts",
     "release:build": "bun run scripts/build-release.ts",
     "release:formula": "bun run scripts/generate-homebrew-formula.ts",
+    "release:prepare": "bun run scripts/prepare-release.ts",
     "smoke": "bun run src/cli.ts --version",
     "timing": "bun run build && bun run scripts/timing-baseline.ts"
   },
