@@ -77,6 +77,7 @@ zdr --version
 zdr doctor
 zdr provider-smoke
 zdr benchmark-provider ascan --repeat 5
+zdr benchmark-provider ascan --repeat 5 --provider openai-codex --model gpt-5.3-codex-spark
 ```
 
 ## Shell Setup

@@ -60,6 +60,12 @@ bun run timing -- --repeat 25 --budget-ms 150 ascan
 
 Use `zdr debug-provider-timing <query>` for one live provider selection trace. Use `zdr benchmark-provider <query> --repeat 5` to repeat the live provider selection against one candidate context and summarize selection latency, provider-complete latency when Pi reports it, token usage, cost, and selected-path consistency.
 
+Provider benchmarks can override the configured provider for a single run:
+
+```bash
+zdr benchmark-provider ascan --repeat 5 --provider openai-codex --model gpt-5.3-codex-spark
+```
+
 ## Shell-State Smoke Test
 
 ```bash

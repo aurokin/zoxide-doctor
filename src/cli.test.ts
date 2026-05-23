@@ -1450,10 +1450,11 @@ describe("main timing command", () => {
           { path: selected, score: 10, rank: 1 },
           { path: join(tempDir, "other"), score: 5, rank: 2 },
         ],
-        selectCandidate: async ({ state, candidates }) => {
+        selectCandidate: async ({ state, candidates, provider }) => {
           calls += 1;
           expect(state.shell).toBe("direct-query");
           expect(state.query_argv).toEqual(["ascan"]);
+          expect(provider).toEqual({ name: "openrouter", model: "google/gemini-2.5-flash-lite" });
           return {
             ...selectionResult(candidates[0] ?? null, "selected", 0.9, providerUsage()),
             timings: {
@@ -1473,6 +1474,7 @@ describe("main timing command", () => {
     expect(payload.query).toBe("ascan");
     expect(payload.mode).toBe("direct-query");
     expect(payload.repeat).toBe(2);
+    expect(payload.provider).toEqual({ name: "openrouter", model: "google/gemini-2.5-flash-lite" });
     expect(payload.ok).toBe(true);
     expect(payload.context).toMatchObject({
       zoxide_entry_count: 2,
@@ -1503,6 +1505,36 @@ describe("main timing command", () => {
     expect(payload.iterations).toHaveLength(2);
     expect(payload.iterations.every((iteration) => iteration.ok)).toBe(true);
     expect(calls).toBe(2);
+    expect(stderr).toEqual([]);
+  });
+
+  test("benchmarks one-off provider overrides without changing config", async () => {
+    const selected = join(tempDir, "agentscan");
+
+    expect(
+      await main(["benchmark-provider", "--provider", "openai-codex", "--model", "gpt-5.3-codex-spark", "ascan"], {
+        ...testDeps(),
+        loadZoxideEntries: async () => [{ path: selected, score: 10, rank: 1 }],
+        loadConfig: async () => ({
+          ...defaultLoadedConfig({
+            provider: { name: "openrouter", model: "google/gemini-2.5-flash-lite" },
+          }),
+        }),
+        selectCandidate: async ({ candidates, provider }) => {
+          expect(provider).toEqual({ name: "openai-codex", model: "gpt-5.3-codex-spark" });
+          return selectionResult(candidates[0] ?? null);
+        },
+      }),
+    ).toEqual({ code: 0 });
+
+    const payload = JSON.parse(stdout.join("\n")) as BenchmarkProviderPayload;
+    expect(payload.provider).toEqual({ name: "openai-codex", model: "gpt-5.3-codex-spark" });
+    expect(payload.summary).toMatchObject({
+      success_count: 3,
+      selected_paths: {
+        [selected]: 3,
+      },
+    });
     expect(stderr).toEqual([]);
   });
 
@@ -1546,12 +1578,16 @@ describe("main timing command", () => {
     expect(await main(["benchmark-provider", "ascan", "--repeat", "0"], testDeps())).toEqual({ code: 2 });
     expect(await main(["benchmark-provider", "--repeat=21", "ascan"], testDeps())).toEqual({ code: 2 });
     expect(await main(["benchmark-provider", "--live", "ascan"], testDeps())).toEqual({ code: 2 });
+    expect(await main(["benchmark-provider", "--provider", "openai-codex", "ascan"], testDeps())).toEqual({ code: 2 });
+    expect(await main(["benchmark-provider", "--model=fast-model", "ascan"], testDeps())).toEqual({ code: 2 });
 
     expect(stdout).toEqual([]);
     expect(stderr).toEqual([
       "zdr: --repeat must be a positive integer",
       "zdr: --repeat must be 20 or less",
       "zdr: unknown benchmark-provider option: --live",
+      "zdr: --provider and --model must be provided together",
+      "zdr: --provider and --model must be provided together",
     ]);
   });
 });
@@ -2289,6 +2325,10 @@ type BenchmarkProviderPayload = {
   query: string;
   mode: "direct-query" | "recovery";
   repeat: number;
+  provider: {
+    name: string;
+    model: string;
+  };
   ok: boolean;
   total_duration_ms: number;
   context: Record<string, unknown>;
