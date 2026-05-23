@@ -55,6 +55,7 @@ zdr debug-timing ascan --budget-ms 150
 zdr debug-provider-timing ascan
 zdr benchmark-provider ascan --repeat 5
 zdr benchmark-provider ascan --repeat 5 --provider openai-codex --model gpt-5.3-codex-spark
+zdr benchmark-suite ascan
 ```
 
 `debug-timing` prints JSON for local paths such as version metadata, correction-cache reads, exact-query cache lookup when a query is supplied, and no-arg recovery context gathering before any provider call. `--budget-ms` adds budget metadata to the JSON without changing the command's exit status.
@@ -62,5 +63,7 @@ zdr benchmark-provider ascan --repeat 5 --provider openai-codex --model gpt-5.3-
 `debug-provider-timing` is an opt-in live provider diagnostic. It separates local candidate setup from the provider selection call and includes provider usage fields when Pi returns them.
 
 `benchmark-provider` is the repeated live-provider version. It builds the same candidate context once, runs provider selection repeatedly, and prints p50/p95/max summaries, selected-path counts, token totals, and cost totals. `--provider` and `--model` override the configured provider only for that benchmark run. The command is intentionally capped at `--repeat 20` to avoid accidental spend.
+
+`benchmark-suite` runs that same benchmark across provider/model pairs. With no explicit providers, it uses only the configured provider so optional providers do not make the default diagnostic fail. Passing one or more `--provider provider:model` flags replaces the default suite.
 
 When telemetry is enabled, direct-query and no-arg recovery modes record JSONL events for cache hits, model selections, picker outcomes, no-selections, and errors. Provider-backed model events include Pi usage data plus flattened token, prompt-cache, and cost fields when Pi exposes them.

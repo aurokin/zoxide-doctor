@@ -567,6 +567,8 @@ describe("main correction cache commands", () => {
     expect(script).toContain("debug-events");
     expect(script).toContain("debug-timing");
     expect(script).toContain("debug-provider-timing");
+    expect(script).toContain("benchmark-provider");
+    expect(script).toContain("benchmark-suite");
     expect(script).toContain("prune-events");
     expect(script).toContain("forget");
     expect(script).toContain('cd -- "$__zdr_target"');
@@ -1574,6 +1576,119 @@ describe("main timing command", () => {
     expect(stderr).toEqual([]);
   });
 
+  test("benchmarks the configured provider by default against one candidate context", async () => {
+    const selected = join(tempDir, "agentscan");
+    const providerCalls: Array<{ name: string; model: string }> = [];
+    let zoxideLoads = 0;
+
+    expect(
+      await main(["benchmark-suite", "ascan"], {
+        ...testDeps(),
+        loadZoxideEntries: async () => {
+          zoxideLoads += 1;
+          return [{ path: selected, score: 10, rank: 1 }];
+        },
+        selectCandidate: async ({ candidates, provider }) => {
+          providerCalls.push(provider ?? { name: "missing", model: "missing" });
+          return selectionResult(candidates[0] ?? null);
+        },
+      }),
+    ).toEqual({ code: 0 });
+
+    const payload = JSON.parse(stdout.join("\n")) as BenchmarkSuitePayload;
+    expect(payload.command).toBe("benchmark-suite");
+    expect(payload.query).toBe("ascan");
+    expect(payload.repeat).toBe(1);
+    expect(payload.ok).toBe(true);
+    expect(payload.context).toMatchObject({
+      zoxide_entry_count: 1,
+      candidate_count: 1,
+    });
+    expect(payload.benchmarks.map((benchmark) => benchmark.provider)).toEqual([
+      { name: "openrouter", model: "google/gemini-2.5-flash-lite" },
+    ]);
+    expect(payload.benchmarks.every((benchmark) => benchmark.summary.success_count === 1)).toBe(true);
+    expect(providerCalls).toEqual([
+      { name: "openrouter", model: "google/gemini-2.5-flash-lite" },
+    ]);
+    expect(zoxideLoads).toBe(1);
+    expect(stderr).toEqual([]);
+  });
+
+  test("benchmarks explicit provider suite entries", async () => {
+    const selected = join(tempDir, "agentscan");
+
+    expect(
+      await main(
+        [
+          "benchmark-suite",
+          "--repeat=2",
+          "--provider",
+          "openai-codex:gpt-5.3-codex-spark",
+          "--provider=openrouter:google/gemini-2.5-flash-lite",
+          "ascan",
+        ],
+        {
+          ...testDeps(),
+          loadZoxideEntries: async () => [{ path: selected, score: 10, rank: 1 }],
+          selectCandidate: async ({ candidates }) => selectionResult(candidates[0] ?? null),
+        },
+      ),
+    ).toEqual({ code: 0 });
+
+    const payload = JSON.parse(stdout.join("\n")) as BenchmarkSuitePayload;
+    expect(payload.repeat).toBe(2);
+    expect(payload.benchmarks).toHaveLength(2);
+    expect(payload.benchmarks.map((benchmark) => benchmark.provider)).toEqual([
+      { name: "openai-codex", model: "gpt-5.3-codex-spark" },
+      { name: "openrouter", model: "google/gemini-2.5-flash-lite" },
+    ]);
+    expect(payload.benchmarks.every((benchmark) => benchmark.iterations.length === 2)).toBe(true);
+    expect(stderr).toEqual([]);
+  });
+
+  test("returns failure when any benchmark suite provider fails", async () => {
+    const selected = join(tempDir, "agentscan");
+    let calls = 0;
+
+    expect(
+      await main(
+        [
+          "benchmark-suite",
+          "--provider=openai-codex:gpt-5.3-codex-spark",
+          "--provider=openrouter:google/gemini-2.5-flash-lite",
+          "ascan",
+        ],
+        {
+          ...testDeps(),
+          loadZoxideEntries: async () => [{ path: selected, score: 10, rank: 1 }],
+          selectCandidate: async ({ candidates }) => {
+            calls += 1;
+            if (calls === 2) {
+              throw new Error("provider unavailable");
+            }
+            return selectionResult(candidates[0] ?? null);
+          },
+        },
+      ),
+    ).toEqual({ code: 1 });
+
+    const payload = JSON.parse(stdout.join("\n")) as BenchmarkSuitePayload;
+    expect(payload.ok).toBe(false);
+    expect(payload.benchmarks[1]).toMatchObject({
+      ok: false,
+      summary: {
+        success_count: 0,
+        failure_count: 1,
+      },
+    });
+    expect(payload.benchmarks[1]?.iterations[0]).toMatchObject({
+      ok: false,
+      error: "provider unavailable",
+    });
+    expect(stderr).toEqual([]);
+  });
+
   test("rejects invalid benchmark provider repeat values", async () => {
     expect(await main(["benchmark-provider", "ascan", "--repeat", "0"], testDeps())).toEqual({ code: 2 });
     expect(await main(["benchmark-provider", "--repeat=21", "ascan"], testDeps())).toEqual({ code: 2 });
@@ -1588,6 +1703,19 @@ describe("main timing command", () => {
       "zdr: unknown benchmark-provider option: --live",
       "zdr: --provider and --model must be provided together",
       "zdr: --provider and --model must be provided together",
+    ]);
+  });
+
+  test("rejects invalid benchmark suite args", async () => {
+    expect(await main(["benchmark-suite", "--repeat", "0", "ascan"], testDeps())).toEqual({ code: 2 });
+    expect(await main(["benchmark-suite", "--provider", "openai-codex", "ascan"], testDeps())).toEqual({ code: 2 });
+    expect(await main(["benchmark-suite", "--model", "fast-model", "ascan"], testDeps())).toEqual({ code: 2 });
+
+    expect(stdout).toEqual([]);
+    expect(stderr).toEqual([
+      "zdr: --repeat must be a positive integer",
+      "zdr: --provider requires provider:model",
+      "zdr: unknown benchmark-suite option: --model",
     ]);
   });
 });
@@ -2150,7 +2278,7 @@ function runShellRuntimeTest(shellName: "zsh" | "bash", smokeLine: string, shell
 #!/usr/bin/env bash
 printf '%s\\n' "$*" >> "$ZDR_LOG"
 case "$1" in
-  record-z|finish-z|clear-recovery-retry|debug-state|debug-candidates|debug-select|debug-corrections|debug-events|debug-timing|debug-provider-timing|benchmark-provider|doctor|config-provider|prune-events|forget|init|--*|-*)
+  record-z|finish-z|clear-recovery-retry|debug-state|debug-candidates|debug-select|debug-corrections|debug-events|debug-timing|debug-provider-timing|benchmark-provider|benchmark-suite|doctor|config-provider|prune-events|forget|init|--*|-*)
     if [ "$1" = "--version" ]; then
       printf '0.0.0-test\\n'
     fi
@@ -2214,7 +2342,7 @@ function runFishRuntimeTest(fishScript: string): { skipped: boolean; output: str
 #!/usr/bin/env bash
 printf '%s\\n' "$*" >> "$ZDR_LOG"
 case "$1" in
-  record-z|finish-z|clear-recovery-retry|debug-state|debug-candidates|debug-select|debug-corrections|debug-events|debug-timing|debug-provider-timing|benchmark-provider|doctor|config-provider|prune-events|forget|init|--*|-*)
+  record-z|finish-z|clear-recovery-retry|debug-state|debug-candidates|debug-select|debug-corrections|debug-events|debug-timing|debug-provider-timing|benchmark-provider|benchmark-suite|doctor|config-provider|prune-events|forget|init|--*|-*)
     if [ "$1" = "--version" ]; then
       printf '0.0.0-test\\n'
     fi
@@ -2339,5 +2467,32 @@ type BenchmarkProviderPayload = {
     duration_ms: number;
     metadata?: Record<string, unknown>;
     error?: string;
+  }>;
+};
+
+type BenchmarkSuitePayload = {
+  schema_version: 1;
+  command: "benchmark-suite";
+  query: string;
+  mode: "direct-query" | "recovery";
+  repeat: number;
+  ok: boolean;
+  total_duration_ms: number;
+  context: Record<string, unknown>;
+  benchmarks: Array<{
+    provider: {
+      name: string;
+      model: string;
+    };
+    ok: boolean;
+    total_duration_ms: number;
+    summary: Record<string, unknown>;
+    iterations: Array<{
+      index: number;
+      ok: boolean;
+      duration_ms: number;
+      metadata?: Record<string, unknown>;
+      error?: string;
+    }>;
   }>;
 };

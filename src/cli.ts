@@ -122,6 +122,8 @@ export async function main(argv: string[], deps: CliDeps = defaultDeps): Promise
       return debugProviderTimingCommand(args, deps);
     case "benchmark-provider":
       return benchmarkProviderCommand(args, deps);
+    case "benchmark-suite":
+      return benchmarkSuiteCommand(args, deps);
     case "doctor":
       return doctorCommand(args, deps);
     case "config-provider":
@@ -628,29 +630,13 @@ async function benchmarkProviderCommand(args: string[], deps: CliDeps): Promise<
   }
   const provider = parsed.provider ?? config.provider;
 
-  const iterations: ProviderBenchmarkIteration[] = [];
-  for (let index = 0; index < parsed.repeat; index += 1) {
-    const start = performance.now();
-    try {
-      const metadata = await runProviderSelectionForTiming(context.state, context.candidates, context.rejectedPaths, deps, {
-        provider,
-        privacy: config.privacy,
-      });
-      iterations.push({
-        index: index + 1,
-        ok: true,
-        duration_ms: elapsedMs(start),
-        metadata,
-      });
-    } catch (error) {
-      iterations.push({
-        index: index + 1,
-        ok: false,
-        duration_ms: elapsedMs(start),
-        error: error instanceof Error ? error.message : String(error),
-      });
-    }
-  }
+  const benchmark = await runProviderBenchmark({
+    context,
+    provider,
+    repeat: parsed.repeat,
+    privacy: config.privacy,
+    deps,
+  });
 
   console.log(
     JSON.stringify(
@@ -661,7 +647,6 @@ async function benchmarkProviderCommand(args: string[], deps: CliDeps): Promise<
         mode: parsed.queryArgv.length > 0 ? "direct-query" : "recovery",
         repeat: parsed.repeat,
         provider,
-        ok: iterations.every((iteration) => iteration.ok),
         total_duration_ms: elapsedMs(commandStart),
         context: {
           duration_ms: contextDurationMs,
@@ -669,14 +654,80 @@ async function benchmarkProviderCommand(args: string[], deps: CliDeps): Promise<
           candidate_count: context.candidates.length,
           rejected_path_count: context.rejectedPaths.length,
         },
-        summary: summarizeProviderBenchmark(iterations),
-        iterations,
+        ok: benchmark.ok,
+        summary: benchmark.summary,
+        iterations: benchmark.iterations,
       },
       null,
       2,
     ),
   );
-  return { code: iterations.every((iteration) => iteration.ok) ? 0 : 1 };
+  return { code: benchmark.ok ? 0 : 1 };
+}
+
+async function benchmarkSuiteCommand(args: string[], deps: CliDeps): Promise<CommandResult> {
+  const parsed = parseBenchmarkSuiteArgs(args);
+  if (!parsed.ok) {
+    console.error(`zdr: ${parsed.error}`);
+    return { code: 2 };
+  }
+
+  const commandStart = performance.now();
+  const contextStart = performance.now();
+  let context: Awaited<ReturnType<typeof buildProviderTimingContext>>;
+  try {
+    context = await buildProviderTimingContext(parsed.queryArgv, deps);
+  } catch (error) {
+    console.error(`zdr: ${error instanceof Error ? error.message : String(error)}`);
+    return { code: 1 };
+  }
+  const contextDurationMs = elapsedMs(contextStart);
+  let config: ZdrConfig;
+  try {
+    config = (await deps.loadConfig()).config;
+  } catch (error) {
+    console.error(`zdr: ${error instanceof Error ? error.message : String(error)}`);
+    return { code: 1 };
+  }
+
+  const providers = parsed.providers.length > 0 ? parsed.providers : defaultBenchmarkSuiteProviders(config.provider);
+  const benchmarks: ProviderBenchmarkResult[] = [];
+  for (const provider of providers) {
+    benchmarks.push(
+      await runProviderBenchmark({
+        context,
+        provider,
+        repeat: parsed.repeat,
+        privacy: config.privacy,
+        deps,
+      }),
+    );
+  }
+
+  const ok = benchmarks.every((benchmark) => benchmark.ok);
+  console.log(
+    JSON.stringify(
+      {
+        schema_version: 1,
+        command: "benchmark-suite",
+        query: context.state.query_argv.join(" "),
+        mode: parsed.queryArgv.length > 0 ? "direct-query" : "recovery",
+        repeat: parsed.repeat,
+        ok,
+        total_duration_ms: elapsedMs(commandStart),
+        context: {
+          duration_ms: contextDurationMs,
+          zoxide_entry_count: context.entryCount,
+          candidate_count: context.candidates.length,
+          rejected_path_count: context.rejectedPaths.length,
+        },
+        benchmarks,
+      },
+      null,
+      2,
+    ),
+  );
+  return { code: ok ? 0 : 1 };
 }
 
 async function runProviderSelectionForTiming(
@@ -711,6 +762,14 @@ async function runProviderSelectionForTiming(
   };
 }
 
+type ProviderBenchmarkResult = {
+  provider: ZdrConfig["provider"];
+  ok: boolean;
+  total_duration_ms: number;
+  summary: Record<string, unknown>;
+  iterations: ProviderBenchmarkIteration[];
+};
+
 type ProviderBenchmarkIteration = {
   index: number;
   ok: boolean;
@@ -719,8 +778,59 @@ type ProviderBenchmarkIteration = {
   error?: string;
 };
 
+async function runProviderBenchmark(input: {
+  context: Awaited<ReturnType<typeof buildProviderTimingContext>>;
+  provider: ZdrConfig["provider"];
+  repeat: number;
+  privacy: ZdrConfig["privacy"];
+  deps: CliDeps;
+}): Promise<ProviderBenchmarkResult> {
+  const start = performance.now();
+  const iterations: ProviderBenchmarkIteration[] = [];
+  for (let index = 0; index < input.repeat; index += 1) {
+    const iterationStart = performance.now();
+    try {
+      const metadata = await runProviderSelectionForTiming(
+        input.context.state,
+        input.context.candidates,
+        input.context.rejectedPaths,
+        input.deps,
+        {
+          provider: input.provider,
+          privacy: input.privacy,
+        },
+      );
+      iterations.push({
+        index: index + 1,
+        ok: true,
+        duration_ms: elapsedMs(iterationStart),
+        metadata,
+      });
+    } catch (error) {
+      iterations.push({
+        index: index + 1,
+        ok: false,
+        duration_ms: elapsedMs(iterationStart),
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  return {
+    provider: input.provider,
+    ok: iterations.every((iteration) => iteration.ok),
+    total_duration_ms: elapsedMs(start),
+    summary: summarizeProviderBenchmark(iterations),
+    iterations,
+  };
+}
+
 type BenchmarkProviderArgs =
   | { ok: true; queryArgv: string[]; repeat: number; provider?: ZdrConfig["provider"] }
+  | { ok: false; error: string };
+
+type BenchmarkSuiteArgs =
+  | { ok: true; queryArgv: string[]; repeat: number; providers: ZdrConfig["provider"][] }
   | { ok: false; error: string };
 
 const DEFAULT_PROVIDER_BENCHMARK_REPEAT = 3;
@@ -805,6 +915,98 @@ function parseBenchmarkProviderArgs(args: string[]): BenchmarkProviderArgs {
   return providerName && model
     ? { ok: true, queryArgv, repeat, provider: { name: providerName, model } }
     : { ok: true, queryArgv, repeat };
+}
+
+function parseBenchmarkSuiteArgs(args: string[]): BenchmarkSuiteArgs {
+  const queryArgv: string[] = [];
+  const providers: ZdrConfig["provider"][] = [];
+  let repeat = 1;
+
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+    if (!arg) {
+      return { ok: false, error: "unexpected missing argument" };
+    }
+    if (arg === "--repeat") {
+      const value = args[index + 1];
+      if (!value) {
+        return { ok: false, error: "--repeat requires a value" };
+      }
+      const parsed = parseProviderBenchmarkRepeat(value);
+      if (!parsed.ok) {
+        return parsed;
+      }
+      repeat = parsed.value;
+      index += 1;
+      continue;
+    }
+    if (arg.startsWith("--repeat=")) {
+      const parsed = parseProviderBenchmarkRepeat(arg.slice("--repeat=".length));
+      if (!parsed.ok) {
+        return parsed;
+      }
+      repeat = parsed.value;
+      continue;
+    }
+    if (arg === "--provider") {
+      const value = args[index + 1];
+      if (!value || value.trim().length === 0 || value.startsWith("-")) {
+        return { ok: false, error: "--provider requires provider:model" };
+      }
+      const parsed = parseSuiteProvider(value);
+      if (!parsed.ok) {
+        return parsed;
+      }
+      providers.push(parsed.provider);
+      index += 1;
+      continue;
+    }
+    if (arg.startsWith("--provider=")) {
+      const parsed = parseSuiteProvider(arg.slice("--provider=".length));
+      if (!parsed.ok) {
+        return parsed;
+      }
+      providers.push(parsed.provider);
+      continue;
+    }
+    if (arg.startsWith("-")) {
+      return { ok: false, error: `unknown benchmark-suite option: ${arg}` };
+    }
+    queryArgv.push(arg);
+  }
+
+  return { ok: true, queryArgv, repeat, providers: dedupeProviders(providers) };
+}
+
+function parseSuiteProvider(value: string): { ok: true; provider: ZdrConfig["provider"] } | { ok: false; error: string } {
+  const separator = value.indexOf(":");
+  if (separator <= 0 || separator === value.length - 1) {
+    return { ok: false, error: "--provider requires provider:model" };
+  }
+  const name = value.slice(0, separator).trim();
+  const model = value.slice(separator + 1).trim();
+  if (!name || !model) {
+    return { ok: false, error: "--provider requires provider:model" };
+  }
+  return { ok: true, provider: { name, model } };
+}
+
+function defaultBenchmarkSuiteProviders(configuredProvider: ZdrConfig["provider"]): ZdrConfig["provider"][] {
+  return [configuredProvider];
+}
+
+function dedupeProviders(providers: ZdrConfig["provider"][]): ZdrConfig["provider"][] {
+  const seen = new Set<string>();
+  const deduped: ZdrConfig["provider"][] = [];
+  for (const provider of providers) {
+    const key = `${provider.name}\0${provider.model}`;
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    deduped.push(provider);
+  }
+  return deduped;
 }
 
 function parseProviderBenchmarkRepeat(value: string): { ok: true; value: number } | { ok: false; error: string } {
@@ -1882,6 +2084,8 @@ Usage:
                       Repeat live provider selection and summarize latency
   zdr benchmark-provider [query] --provider <provider> --model <model>
                       Benchmark a provider/model without changing config
+  zdr benchmark-suite [query] [--repeat <count>]
+                      Benchmark the same candidate context across providers
   zdr doctor         Print setup diagnostics as JSON
   zdr config-provider <provider> <model>
                       Set provider.name and provider.model in config
@@ -1928,7 +2132,7 @@ function zshInitScript(): string {
     "",
     "zdr() {",
     "  case \"$1\" in",
-    "    init|record-z|finish-z|clear-recovery-retry|debug-state|debug-candidates|debug-select|debug-corrections|debug-config|debug-events|debug-timing|debug-provider-timing|benchmark-provider|doctor|config-provider|prune-events|forget|provider-smoke|provider-login|provider-logout|provider-auth-status|--*|-*)",
+    "    init|record-z|finish-z|clear-recovery-retry|debug-state|debug-candidates|debug-select|debug-corrections|debug-config|debug-events|debug-timing|debug-provider-timing|benchmark-provider|benchmark-suite|doctor|config-provider|prune-events|forget|provider-smoke|provider-login|provider-logout|provider-auth-status|--*|-*)",
     "      command zdr \"$@\"",
     "      return $?",
     "      ;;",
@@ -1999,7 +2203,7 @@ function bashInitScript(): string {
     "zdr() {",
     "  __zdr_inside_zdr=1",
     "  case \"$1\" in",
-    "    init|record-z|finish-z|clear-recovery-retry|debug-state|debug-candidates|debug-select|debug-corrections|debug-config|debug-events|debug-timing|debug-provider-timing|benchmark-provider|doctor|config-provider|prune-events|forget|provider-smoke|provider-login|provider-logout|provider-auth-status|--*|-*)",
+    "    init|record-z|finish-z|clear-recovery-retry|debug-state|debug-candidates|debug-select|debug-corrections|debug-config|debug-events|debug-timing|debug-provider-timing|benchmark-provider|benchmark-suite|doctor|config-provider|prune-events|forget|provider-smoke|provider-login|provider-logout|provider-auth-status|--*|-*)",
     "      command zdr \"$@\"",
     "      local __zdr_status=$?",
     "      __zdr_last_command=\"zdr-other\"",
@@ -2087,7 +2291,7 @@ function fishInitScript(): string {
     "",
     "function zdr",
     '    switch "$argv[1]"',
-    "        case init record-z finish-z clear-recovery-retry debug-state debug-candidates debug-select debug-corrections debug-config debug-events debug-timing debug-provider-timing benchmark-provider doctor config-provider prune-events forget provider-smoke provider-login provider-logout provider-auth-status '--*' '-*'",
+    "        case init record-z finish-z clear-recovery-retry debug-state debug-candidates debug-select debug-corrections debug-config debug-events debug-timing debug-provider-timing benchmark-provider benchmark-suite doctor config-provider prune-events forget provider-smoke provider-login provider-logout provider-auth-status '--*' '-*'",
     "            command zdr $argv",
     "            return $status",
     "    end",

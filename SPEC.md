@@ -255,6 +255,8 @@ ZDR owns its OAuth credential store at `~/.config/zdr/auth.json`, written with `
 
 `zdr benchmark-provider [query] --repeat <count>` is an opt-in live-provider benchmark. It reuses one candidate context, repeats provider selection, and reports latency, usage, cost, selected-path consistency, and the effective provider/model. `--provider` and `--model` may override the configured provider for that benchmark run only. Repeat count is capped to avoid accidental spend.
 
+`zdr benchmark-suite [query] --repeat <count>` runs the same benchmark context across provider/model pairs. By default it tests only the configured provider so the diagnostic does not fail because optional providers are unavailable. Additional `--provider provider:model` arguments replace the default suite for explicit comparisons.
+
 ### 8.2 Reasoning toggle
 
 Use model-specific reasoning controls only where the chosen provider/model supports them. First calls should prefer low latency. Second-call escalation may enable stronger reasoning if supported.

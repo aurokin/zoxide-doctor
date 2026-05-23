@@ -66,6 +66,15 @@ Provider benchmarks can override the configured provider for a single run:
 zdr benchmark-provider ascan --repeat 5 --provider openai-codex --model gpt-5.3-codex-spark
 ```
 
+Use `benchmark-suite` to compare several providers against one candidate context:
+
+```bash
+zdr benchmark-suite ascan
+zdr benchmark-suite ascan --repeat 3 \
+  --provider openai-codex:gpt-5.3-codex-spark \
+  --provider openrouter:google/gemini-2.5-flash-lite
+```
+
 ## Shell-State Smoke Test
 
 ```bash
