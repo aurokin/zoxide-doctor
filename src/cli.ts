@@ -2,6 +2,13 @@
 
 import packageJson from "../package.json" with { type: "json" };
 import { dirname, parse } from "node:path";
+import {
+  runProviderBenchmark,
+  runProviderSelectionForTiming,
+  type ProviderBenchmarkContext,
+  type ProviderBenchmarkIteration,
+  type ProviderBenchmarkResult,
+} from "./benchmark.js";
 import { buildCandidates, shouldAddLocalScanCandidates, type Candidate } from "./candidates.js";
 import { getConfigPaths, loadConfig, setProviderConfig, type LoadedConfig, type ZdrConfig } from "./config.js";
 import {
@@ -577,7 +584,17 @@ async function debugProviderTimingCommand(args: string[], deps: CliDeps): Promis
   const selectionState = state;
   if (selectionState && candidates.length > 0) {
     measurements.push(
-      await measureStep("provider-selection", () => runProviderSelectionForTiming(selectionState, candidates, rejectedPaths, deps)),
+      await measureStep("provider-selection", async () => {
+        const config = (await deps.loadConfig()).config;
+        return runProviderSelectionForTiming({
+          state: selectionState,
+          candidates,
+          rejectedPaths,
+          provider: config.provider,
+          privacy: config.privacy,
+          selectCandidate: deps.selectCandidate,
+        });
+      }),
     );
   } else {
     measurements.push({
@@ -650,7 +667,7 @@ async function benchmarkProviderCommand(args: string[], deps: CliDeps): Promise<
     provider,
     repeat: parsed.repeat,
     privacy: config.privacy,
-    deps,
+    selectCandidate: deps.selectCandidate,
     ...(parsed.jsonl
       ? {
           onIteration: (iteration: ProviderBenchmarkIteration) =>
@@ -744,7 +761,7 @@ async function benchmarkSuiteCommand(args: string[], deps: CliDeps): Promise<Com
       provider,
       repeat: parsed.repeat,
       privacy: config.privacy,
-      deps,
+      selectCandidate: deps.selectCandidate,
       ...(parsed.jsonl
         ? {
             onIteration: (iteration: ProviderBenchmarkIteration) =>
@@ -805,106 +822,6 @@ async function benchmarkSuiteCommand(args: string[], deps: CliDeps): Promise<Com
     ),
   );
   return { code: ok ? 0 : 1 };
-}
-
-async function runProviderSelectionForTiming(
-  state: FinishedZState,
-  candidates: Candidate[],
-  rejectedPaths: string[],
-  deps: CliDeps,
-  options: { provider?: ZdrConfig["provider"]; privacy?: ZdrConfig["privacy"] } = {},
-): Promise<Record<string, unknown>> {
-  const config = options.provider && options.privacy ? undefined : (await deps.loadConfig()).config;
-  const provider = options.provider ?? config?.provider;
-  const privacy = options.privacy ?? config?.privacy;
-  if (!provider || !privacy) {
-    throw new Error("provider configuration is unavailable");
-  }
-  const result = await deps.selectCandidate({
-    state,
-    candidates,
-    rejectedPaths,
-    provider,
-    privacy,
-  });
-  const providerUsage = summarizeProviderUsage(result.usage);
-  return {
-    selected_candidate_id: result.selection.candidate_id,
-    selected_path: result.candidate?.path ?? null,
-    confidence: result.selection.confidence,
-    reason: result.selection.reason,
-    ...(result.timings === undefined ? {} : { provider_timings: result.timings }),
-    ...(result.usage === null || result.usage === undefined ? {} : { usage: result.usage }),
-    ...(providerUsage === null ? {} : { provider_usage: providerUsage }),
-  };
-}
-
-type ProviderBenchmarkResult = {
-  provider: ZdrConfig["provider"];
-  ok: boolean;
-  total_duration_ms: number;
-  summary: Record<string, unknown>;
-  iterations: ProviderBenchmarkIteration[];
-};
-
-type ProviderBenchmarkIteration = {
-  index: number;
-  ok: boolean;
-  duration_ms: number;
-  metadata?: Record<string, unknown>;
-  error?: string;
-};
-
-async function runProviderBenchmark(input: {
-  context: Awaited<ReturnType<typeof buildProviderTimingContext>>;
-  provider: ZdrConfig["provider"];
-  repeat: number;
-  privacy: ZdrConfig["privacy"];
-  deps: CliDeps;
-  onIteration?: (iteration: ProviderBenchmarkIteration) => void;
-}): Promise<ProviderBenchmarkResult> {
-  const start = performance.now();
-  const iterations: ProviderBenchmarkIteration[] = [];
-  for (let index = 0; index < input.repeat; index += 1) {
-    const iterationStart = performance.now();
-    try {
-      const metadata = await runProviderSelectionForTiming(
-        input.context.state,
-        input.context.candidates,
-        input.context.rejectedPaths,
-        input.deps,
-        {
-          provider: input.provider,
-          privacy: input.privacy,
-        },
-      );
-      const iteration = {
-        index: index + 1,
-        ok: true,
-        duration_ms: elapsedMs(iterationStart),
-        metadata,
-      };
-      iterations.push(iteration);
-      input.onIteration?.(iteration);
-    } catch (error) {
-      const iteration = {
-        index: index + 1,
-        ok: false,
-        duration_ms: elapsedMs(iterationStart),
-        error: error instanceof Error ? error.message : String(error),
-      };
-      iterations.push(iteration);
-      input.onIteration?.(iteration);
-    }
-  }
-
-  return {
-    provider: input.provider,
-    ok: iterations.every((iteration) => iteration.ok),
-    total_duration_ms: elapsedMs(start),
-    summary: summarizeProviderBenchmark(iterations),
-    iterations,
-  };
 }
 
 type BenchmarkProviderArgs =
@@ -1102,7 +1019,7 @@ function dedupeProviders(providers: ZdrConfig["provider"][]): ZdrConfig["provide
 }
 
 function providerBenchmarkContextPayload(
-  context: Awaited<ReturnType<typeof buildProviderTimingContext>>,
+  context: ProviderBenchmarkContext,
   durationMs: number,
 ): Record<string, unknown> {
   return {
@@ -1128,85 +1045,6 @@ function parseProviderBenchmarkRepeat(value: string): { ok: true; value: number 
   return { ok: true, value: parsed };
 }
 
-function summarizeProviderBenchmark(iterations: ProviderBenchmarkIteration[]): Record<string, unknown> {
-  const successful = iterations.filter((iteration) => iteration.ok);
-  const selectedPaths = new Map<string, number>();
-  const providerCompleteDurations: number[] = [];
-  let totalTokens = 0;
-  let totalCost = 0;
-  let usageCount = 0;
-
-  for (const iteration of successful) {
-    const metadata = iteration.metadata ?? {};
-    const selectedPath = typeof metadata.selected_path === "string" ? metadata.selected_path : null;
-    if (selectedPath) {
-      selectedPaths.set(selectedPath, (selectedPaths.get(selectedPath) ?? 0) + 1);
-    }
-    const providerTimings = metadata.provider_timings;
-    if (isRecord(providerTimings) && typeof providerTimings.provider_complete_ms === "number") {
-      providerCompleteDurations.push(providerTimings.provider_complete_ms);
-    }
-    const providerUsage = metadata.provider_usage;
-    if (isRecord(providerUsage)) {
-      if (typeof providerUsage.total_tokens === "number") {
-        totalTokens += providerUsage.total_tokens;
-      }
-      if (typeof providerUsage.cost_total === "number") {
-        totalCost += providerUsage.cost_total;
-      }
-      usageCount += 1;
-    }
-  }
-
-  return {
-    iteration_count: iterations.length,
-    success_count: successful.length,
-    failure_count: iterations.length - successful.length,
-    selection_duration_ms: summarizeDurations(successful.map((iteration) => iteration.duration_ms)),
-    ...(providerCompleteDurations.length === 0
-      ? {}
-      : { provider_complete_ms: summarizeDurations(providerCompleteDurations) }),
-    selected_paths: Object.fromEntries([...selectedPaths.entries()].sort((left, right) => right[1] - left[1])),
-    ...(usageCount === 0
-      ? {}
-      : {
-          usage: {
-            total_tokens: totalTokens,
-            average_tokens: roundMs(totalTokens / usageCount),
-            cost_total: totalCost,
-            average_cost: totalCost / usageCount,
-          },
-        }),
-  };
-}
-
-function summarizeDurations(values: number[]): Record<string, number> | null {
-  if (values.length === 0) {
-    return null;
-  }
-  const sorted = [...values].sort((left, right) => left - right);
-  const total = sorted.reduce((sum, value) => sum + value, 0);
-  return {
-    min: roundMs(sorted[0] ?? 0),
-    p50: percentile(sorted, 0.5),
-    p95: percentile(sorted, 0.95),
-    max: roundMs(sorted.at(-1) ?? 0),
-    average: roundMs(total / sorted.length),
-  };
-}
-
-function percentile(sortedValues: number[], percentileValue: number): number {
-  if (sortedValues.length === 0) {
-    return 0;
-  }
-  const index = Math.ceil(sortedValues.length * percentileValue) - 1;
-  return roundMs(sortedValues[Math.max(0, Math.min(index, sortedValues.length - 1))] ?? 0);
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
 type DebugProviderTimingArgs =
   | { ok: true; queryArgv: string[] }
   | { ok: false; error: string };
@@ -1223,7 +1061,7 @@ function parseDebugProviderTimingArgs(args: string[]): DebugProviderTimingArgs {
 async function buildProviderTimingContext(
   queryArgv: string[],
   deps: CliDeps,
-): Promise<{ state: FinishedZState; rejectedPaths: string[]; candidates: Candidate[]; entryCount: number }> {
+): Promise<ProviderBenchmarkContext> {
   const query = queryArgv.join(" ").trim();
   const state = query.length > 0 ? directQueryState(queryArgv, deps) : await requireRecordedZState();
   const retry = query.length > 0 ? null : await readRecoveryRetryForAttempt(state);
