@@ -1,10 +1,8 @@
 #!/usr/bin/env bun
 
 import packageJson from "../package.json" with { type: "json" };
-import {
-  directQueryCommand,
-  recoverCommand,
-} from "./navigation.js";
+import { directQueryCommand } from "./direct-query.js";
+import { recoverCommand } from "./recovery.js";
 import {
   benchmarkProviderCommand,
   benchmarkSuiteCommand,

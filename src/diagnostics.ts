@@ -15,8 +15,9 @@ import {
   parseDebugTimingArgs,
 } from "./cli-args.js";
 import { readCorrectionCache, type CorrectionInspection } from "./corrections.js";
-import { buildSelectionCandidates, directQueryState, type NavigationDeps } from "./navigation.js";
+import { directQueryState } from "./direct-query.js";
 import type { ProviderReasoning, SelectionResult } from "./provider/select.js";
+import { buildSelectionCandidates, type NavigationDeps } from "./selection-context.js";
 import { type FinishedZState, readLastZState, readRecoveryRetryForAttempt } from "./shell-state.js";
 import type { ZoxideEntry } from "./zoxide.js";
 
