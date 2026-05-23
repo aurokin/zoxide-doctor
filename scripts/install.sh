@@ -159,12 +159,12 @@ resolve_latest_version() {
 }
 
 checksum_cmd() {
-  if command -v sha256sum >/dev/null 2>&1; then
-    printf '%s\n' "sha256sum -c"
-    return
-  fi
   if command -v shasum >/dev/null 2>&1; then
     printf '%s\n' "shasum -a 256 -c"
+    return
+  fi
+  if command -v sha256sum >/dev/null 2>&1; then
+    printf '%s\n' "sha256sum -c"
     return
   fi
   echo "zdr install: required command not found: sha256sum or shasum" >&2
