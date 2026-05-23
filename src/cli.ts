@@ -1,20 +1,15 @@
 #!/usr/bin/env bun
 
 import packageJson from "../package.json" with { type: "json" };
-import { buildCandidates, type Candidate } from "./candidates.js";
+import type { Candidate } from "./candidates.js";
 import { getConfigPaths, loadConfig, setProviderConfig, type LoadedConfig, type ZdrConfig } from "./config.js";
 import {
-  parseDebugEventsArgs,
   parseFinishZArgs,
-  parseLimit,
-  parsePruneEventsArgs,
   parseRecordZArgs,
 } from "./cli-args.js";
 import {
-  forgetCorrection,
   inspectCorrection,
   lookupCorrection,
-  readCorrectionCache,
   storeCorrection,
   type CorrectionEntry,
   type CorrectionInspection,
@@ -24,7 +19,6 @@ import {
   clearRecoveryRetry,
   type FinishedZState,
   finishZAttempt,
-  readLastZState,
   recordZAttempt,
 } from "./shell-state.js";
 import { loadZoxideEntries, type ZoxideEntry } from "./zoxide.js";
@@ -33,7 +27,6 @@ import type { OAuthLoginCallbacks, ProviderAuthStatus } from "./provider/auth.js
 import {
   directQueryCommand,
   recoverCommand,
-  runDebugSelection,
 } from "./navigation.js";
 import {
   benchmarkProviderCommand,
@@ -41,6 +34,16 @@ import {
   debugProviderTimingCommand,
   debugTimingCommand,
 } from "./diagnostics.js";
+import {
+  debugCandidatesCommand,
+  debugConfigCommand,
+  debugCorrectionsCommand,
+  debugEventsCommand,
+  debugSelectCommand,
+  debugStateCommand,
+  forgetCommand,
+  pruneEventsCommand,
+} from "./local-commands.js";
 import {
   configProviderCommand,
   doctorCommand,
@@ -127,7 +130,7 @@ export async function main(argv: string[], deps: CliDeps = defaultDeps): Promise
     case "debug-state":
       return debugStateCommand();
     case "debug-candidates":
-      return debugCandidatesCommand(args);
+      return debugCandidatesCommand(args, deps);
     case "debug-select":
       return debugSelectCommand(args, deps);
     case "debug-corrections":
@@ -261,162 +264,6 @@ async function finishZCommand(args: string[]): Promise<CommandResult> {
       exitStatus: parsed.exitStatus,
     });
     return { code: 0 };
-  } catch (error) {
-    console.error(`zdr: ${error instanceof Error ? error.message : String(error)}`);
-    return { code: 1 };
-  }
-}
-
-async function debugStateCommand(): Promise<CommandResult> {
-  const state = await readLastZState();
-  if (!state) {
-    console.error("zdr: no recorded z attempt found");
-    return { code: 1 };
-  }
-  console.log(JSON.stringify(state, null, 2));
-  return { code: 0 };
-}
-
-async function debugCandidatesCommand(args: string[]): Promise<CommandResult> {
-  const limit = parseLimit(args);
-  if (!limit.ok) {
-    console.error(`zdr: ${limit.error}`);
-    return { code: 2 };
-  }
-
-  const state = await readLastZState();
-  if (!state) {
-    console.error("zdr: no recorded z attempt found");
-    return { code: 1 };
-  }
-
-  try {
-    const entries = await loadZoxideEntries();
-    const candidates = buildCandidates({
-      state,
-      entries,
-      limit: limit.value,
-    });
-    console.log(
-      JSON.stringify(
-        {
-          query: state.query_argv.join(" "),
-          before_pwd: state.before_pwd,
-          after_pwd: state.after_pwd,
-          candidate_count: candidates.length,
-          candidates,
-        },
-        null,
-        2,
-      ),
-    );
-    return { code: 0 };
-  } catch (error) {
-    console.error(`zdr: ${error instanceof Error ? error.message : String(error)}`);
-    return { code: 1 };
-  }
-}
-
-async function debugSelectCommand(args: string[], deps: CliDeps): Promise<CommandResult> {
-  const limit = parseLimit(args);
-  if (!limit.ok) {
-    console.error(`zdr: ${limit.error}`);
-    return { code: 2 };
-  }
-
-  try {
-    const { state, result, rejectedPaths } = await runDebugSelection(limit.value, deps);
-    console.log(
-      JSON.stringify(
-        {
-          query: state.query_argv.join(" "),
-          rejected_paths: rejectedPaths,
-          selected_candidate_id: result.selection.candidate_id,
-          confidence: result.selection.confidence,
-          reason: result.selection.reason,
-          candidate: result.candidate,
-          usage: result.usage,
-          raw_text: result.raw_text,
-        },
-        null,
-        2,
-      ),
-    );
-    return { code: 0 };
-  } catch (error) {
-    console.error(`zdr: ${error instanceof Error ? error.message : String(error)}`);
-    return { code: 1 };
-  }
-}
-
-async function debugCorrectionsCommand(): Promise<CommandResult> {
-  try {
-    console.log(JSON.stringify(await readCorrectionCache(), null, 2));
-    return { code: 0 };
-  } catch (error) {
-    console.error(`zdr: ${error instanceof Error ? error.message : String(error)}`);
-    return { code: 1 };
-  }
-}
-
-async function debugConfigCommand(deps: CliDeps): Promise<CommandResult> {
-  try {
-    console.log(JSON.stringify(await deps.loadConfig(), null, 2));
-    return { code: 0 };
-  } catch (error) {
-    console.error(`zdr: ${error instanceof Error ? error.message : String(error)}`);
-    return { code: 1 };
-  }
-}
-
-async function debugEventsCommand(args: string[], deps: CliDeps): Promise<CommandResult> {
-  const parsed = parseDebugEventsArgs(args);
-  if (!parsed.ok) {
-    console.error(`zdr: ${parsed.error}`);
-    return { code: 2 };
-  }
-
-  try {
-    const options = parsed.limit === undefined ? {} : { limit: parsed.limit };
-    console.log(JSON.stringify(await deps.readTelemetryEvents(options), null, 2));
-    return { code: 0 };
-  } catch (error) {
-    console.error(`zdr: ${error instanceof Error ? error.message : String(error)}`);
-    return { code: 1 };
-  }
-}
-
-async function pruneEventsCommand(args: string[], deps: CliDeps): Promise<CommandResult> {
-  const parsed = parsePruneEventsArgs(args);
-  if (!parsed.ok) {
-    console.error(`zdr: ${parsed.error}`);
-    return { code: 2 };
-  }
-
-  try {
-    const maxEvents = parsed.maxEvents ?? (await deps.loadConfig()).config.telemetry.max_events;
-    console.log(JSON.stringify(await deps.pruneTelemetryEvents({ maxEvents }), null, 2));
-    return { code: 0 };
-  } catch (error) {
-    console.error(`zdr: ${error instanceof Error ? error.message : String(error)}`);
-    return { code: 1 };
-  }
-}
-
-async function forgetCommand(args: string[]): Promise<CommandResult> {
-  const query = args.join(" ").trim();
-  if (query.length === 0) {
-    console.error("zdr: forget requires a query");
-    return { code: 2 };
-  }
-
-  try {
-    if (await forgetCorrection(query)) {
-      console.error(`zdr: forgot correction for ${JSON.stringify(query)}`);
-      return { code: 0 };
-    }
-    console.error(`zdr: no cached correction for ${JSON.stringify(query)}`);
-    return { code: 1 };
   } catch (error) {
     console.error(`zdr: ${error instanceof Error ? error.message : String(error)}`);
     return { code: 1 };
