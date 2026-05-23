@@ -16,8 +16,7 @@ export function selectionCompletionOptions(input: {
   reasoning?: ProviderReasoning;
   apiKey?: string;
 }): SelectionCompletionOptions {
-  const reasoning =
-    input.reasoning ?? (input.provider.name === "openai-codex" ? ("minimal" satisfies ProviderReasoning) : undefined);
+  const reasoning = input.reasoning ?? defaultReasoning(input.provider.name);
   return {
     maxTokens: input.maxTokens,
     timeoutMs: input.timeoutMs,
@@ -25,4 +24,11 @@ export function selectionCompletionOptions(input: {
     ...(reasoning ? { reasoning } : {}),
     ...(input.apiKey ? { apiKey: input.apiKey } : {}),
   };
+}
+
+function defaultReasoning(providerName: string): ProviderReasoning | undefined {
+  if (providerName === "openai-codex" || providerName === "fireworks") {
+    return "minimal";
+  }
+  return undefined;
 }

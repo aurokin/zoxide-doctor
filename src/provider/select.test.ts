@@ -17,11 +17,13 @@ let previousXdgConfigHome: string | undefined;
 
 mock.module("@earendil-works/pi-ai", () => ({
   completeSimple,
-  getProviders: () => ["openrouter", "openai-codex"],
+  getProviders: () => ["openrouter", "openai-codex", "fireworks"],
   getModels: (provider: string) =>
-    provider === "openai-codex"
-      ? [{ id: "gpt-5.3-codex-spark" }]
-      : [{ id: "google/gemini-2.5-flash-lite" }],
+    ({
+      "openai-codex": [{ id: "gpt-5.3-codex-spark" }],
+      fireworks: [{ id: "accounts/fireworks/models/gpt-oss-20b" }],
+      openrouter: [{ id: "google/gemini-2.5-flash-lite" }],
+    })[provider] ?? [],
 }));
 
 beforeEach(async () => {
@@ -129,6 +131,29 @@ describe("selectCandidate", () => {
       reasoning: "minimal",
     });
     expect(call?.[2]).not.toHaveProperty("temperature");
+  });
+
+  test("defaults Fireworks to minimal reasoning", async () => {
+    completeSimple.mockImplementationOnce(async () => ({
+      content: [{ type: "text", text: '{"candidate_id":"c001","confidence":0.8,"reason":"selected"}' }],
+      usage: null,
+    }));
+
+    await selectCandidate({
+      state: finishedZState(),
+      candidates: [candidate()],
+      provider: {
+        name: "fireworks",
+        model: "accounts/fireworks/models/gpt-oss-20b",
+      },
+    });
+
+    const call = completeSimple.mock.calls[0] as unknown[] | undefined;
+    expect(call?.[2]).toMatchObject({
+      maxTokens: 256,
+      reasoning: "minimal",
+      temperature: 0,
+    });
   });
 });
 
