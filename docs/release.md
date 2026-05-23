@@ -18,4 +18,18 @@ bun run verify
 bun run release:build
 ```
 
-Install channels such as Homebrew or a curl-based installer are not implemented yet.
+## Installer
+
+The curl-based installer downloads the matching release archive, verifies it against `SHA256SUMS`, and installs `zdr` into `~/.local/bin` by default:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/aurokin/zoxide-doctor/main/scripts/install.sh | sh
+```
+
+Install a specific version or directory:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/aurokin/zoxide-doctor/main/scripts/install.sh | sh -s -- --version 0.1.0 --dir "$HOME/bin"
+```
+
+Homebrew is not implemented yet.

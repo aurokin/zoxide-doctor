@@ -26,10 +26,11 @@ Implemented:
 - local opt-in telemetry and provider usage accounting.
 - OAuth login for Pi OAuth providers such as `openai-codex`.
 - strict v1 config with provider, privacy, and telemetry settings.
+- curl-based release installer.
 
 Not implemented yet:
 
-- install channels such as Homebrew or a curl-based installer.
+- Homebrew install channel.
 
 ## Install
 
@@ -51,6 +52,18 @@ Install a dev build into `~/.local/bin`:
 
 ```bash
 bun run install:dev
+```
+
+After a tagged release is published, install the latest release into `~/.local/bin`:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/aurokin/zoxide-doctor/main/scripts/install.sh | sh
+```
+
+Install a specific release or directory:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/aurokin/zoxide-doctor/main/scripts/install.sh | sh -s -- --version 0.1.0 --dir "$HOME/bin"
 ```
 
 The executable alone only prints the target path. The shell integration is what turns that path into `cd`, so source `zdr init <shell>` after zoxide init.
