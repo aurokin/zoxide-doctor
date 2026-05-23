@@ -33,3 +33,14 @@ curl -fsSL https://raw.githubusercontent.com/aurokin/zoxide-doctor/main/scripts/
 ```
 
 Homebrew is not implemented yet.
+
+## Homebrew Formula
+
+After release artifacts exist locally, generate the formula:
+
+```bash
+bun run release:build
+bun run release:formula
+```
+
+This writes `Formula/zoxide-doctor.rb` from `package.json` and `release/SHA256SUMS`. Copy that formula into the Homebrew tap after the matching GitHub release is published.

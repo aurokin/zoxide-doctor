@@ -23,6 +23,7 @@
     "install:dev": "bun run scripts/install-dev-build.ts",
     "release:check-version": "bun run scripts/check-release-version.ts",
     "release:build": "bun run scripts/build-release.ts",
+    "release:formula": "bun run scripts/generate-homebrew-formula.ts",
     "smoke": "bun run src/cli.ts --version",
     "timing": "bun run build && bun run scripts/timing-baseline.ts"
   },

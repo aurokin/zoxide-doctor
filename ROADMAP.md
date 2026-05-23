@@ -133,5 +133,5 @@ No remaining hardening tasks are planned for the current roadmap.
 
 ## Remaining Packaging Tasks
 
-1. Homebrew tap or formula.
+1. Homebrew tap.
 2. Publish the first tagged release after CI and release automation settle.
