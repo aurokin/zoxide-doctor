@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import {
   getAuthPath,
   getProviderAuthStatuses,
+  isKnownOAuthProvider,
   loginProvider,
   logoutProvider,
   readAuthStore,
@@ -110,6 +111,11 @@ describe("provider auth", () => {
         }),
       }),
     );
+  });
+
+  test("uses Pi OAuth registry for supported providers", async () => {
+    expect(await isKnownOAuthProvider("github-copilot")).toBe(true);
+    expect(await isKnownOAuthProvider("openrouter")).toBe(false);
   });
 
   test("logs out one provider", async () => {

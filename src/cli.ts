@@ -21,6 +21,7 @@ import {
   parseDebugTimingArgs,
   parseFinishZArgs,
   parseLimit,
+  parseOptionalProviderArg,
   parsePruneEventsArgs,
   parseRecordZArgs,
   parseSingleProviderArg,
@@ -156,6 +157,8 @@ export async function main(argv: string[], deps: CliDeps = defaultDeps): Promise
       return forgetCommand(args);
     case "provider-smoke":
       return providerSmokeCommand(args, deps);
+    case "provider-list":
+      return providerListCommand(args);
     case "provider-login":
       return providerLoginCommand(args, deps);
     case "provider-logout":
@@ -1393,7 +1396,9 @@ async function doctorCommand(args: string[], deps: CliDeps): Promise<CommandResu
     });
 
     const envKeys = findEnvKeys(provider.name) ?? [];
-    const oauth = isKnownOAuthProvider(provider.name) ? (await deps.providerAuthStatuses([provider.name]))[0] : undefined;
+    const oauth = (await isKnownOAuthProvider(provider.name))
+      ? (await deps.providerAuthStatuses([provider.name]))[0]
+      : undefined;
     const authOk = oauth ? oauth.authenticated && oauth.expired !== true : envKeys.length > 0;
     checks.push({
       name: "provider_auth",
@@ -1514,6 +1519,22 @@ async function configProviderCommand(args: string[], deps: CliDeps): Promise<Com
   }
 }
 
+async function providerListCommand(args: string[]): Promise<CommandResult> {
+  const parsed = parseOptionalProviderArg("provider-list", args);
+  if (!parsed.ok) {
+    console.error(`zdr: ${parsed.error}`);
+    return { code: 2 };
+  }
+  try {
+    const { listProviders } = await import("./provider/catalog.js");
+    console.log(JSON.stringify(await listProviders(parsed.provider), null, 2));
+    return { code: 0 };
+  } catch (error) {
+    console.error(`zdr: ${error instanceof Error ? error.message : String(error)}`);
+    return { code: 1 };
+  }
+}
+
 async function providerLoginCommand(args: string[], deps: CliDeps): Promise<CommandResult> {
   const parsed = parseSingleProviderArg("provider-login", args);
   if (!parsed.ok) {
@@ -1583,16 +1604,13 @@ async function providerLogoutCommand(args: string[], deps: CliDeps): Promise<Com
 }
 
 async function providerAuthStatusCommand(args: string[], deps: CliDeps): Promise<CommandResult> {
-  if (args.length > 1) {
-    console.error("zdr: provider-auth-status accepts at most one provider");
-    return { code: 2 };
-  }
-  if (args[0]?.startsWith("-")) {
-    console.error(`zdr: unknown provider-auth-status option: ${args[0]}`);
+  const parsed = parseOptionalProviderArg("provider-auth-status", args);
+  if (!parsed.ok) {
+    console.error(`zdr: ${parsed.error}`);
     return { code: 2 };
   }
   try {
-    const statuses = await deps.providerAuthStatuses(args[0] ? [args[0]] : undefined);
+    const statuses = await deps.providerAuthStatuses(parsed.provider ? [parsed.provider] : undefined);
     console.log(JSON.stringify({ schema_version: 1, providers: statuses }, null, 2));
     return { code: 0 };
   } catch (error) {
@@ -1692,6 +1710,8 @@ Usage:
   zdr provider-smoke  Verify Pi provider/model lookup
   zdr provider-smoke --live
                       Make a tiny live provider completion
+  zdr provider-list [provider]
+                      List Pi providers, OAuth support, and provider models
   zdr provider-login <provider>
                       Log in to an OAuth provider
   zdr provider-logout <provider>

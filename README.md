@@ -69,6 +69,7 @@ zdr config-provider openai-codex gpt-5.3-codex-spark
 ```
 
 This writes `provider.name` and `provider.model` in `~/.config/zdr/config.json`.
+Use `zdr provider-list` to list Pi providers and OAuth support. Use `zdr provider-list <provider>` to print that provider's known model IDs.
 
 Verify local setup:
 
@@ -76,6 +77,7 @@ Verify local setup:
 zdr --version
 zdr doctor
 zdr provider-smoke
+zdr provider-list openai-codex
 zdr benchmark-provider ascan --repeat 5
 zdr benchmark-provider ascan --repeat 5 --provider openai-codex --model gpt-5.3-codex-spark
 zdr benchmark-suite ascan

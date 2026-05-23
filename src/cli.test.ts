@@ -1889,6 +1889,36 @@ describe("main provider auth commands", () => {
     });
   });
 
+  test("prints provider catalog", async () => {
+    expect(await main(["provider-list", "openai-codex"], testDeps())).toEqual({ code: 0 });
+
+    const payload = JSON.parse(stdout.join("\n"));
+    expect(payload).toMatchObject({
+      schema_version: 1,
+      command: "provider-list",
+      providers: [
+        {
+          name: "openai-codex",
+          oauth_supported: true,
+        },
+      ],
+    });
+    expect(payload.models.length).toBeGreaterThan(0);
+    expect(payload.providers[0].model_count).toBe(payload.models.length);
+    expect(payload.models[0]).toEqual({
+      id: expect.any(String),
+      provider: "openai-codex",
+      api: expect.any(String),
+    });
+  });
+
+  test("rejects invalid provider catalog args", async () => {
+    expect(await main(["provider-list", "--json"], testDeps())).toEqual({ code: 2 });
+
+    expect(stdout).toEqual([]);
+    expect(stderr).toEqual(["zdr: unknown provider-list option: --json"]);
+  });
+
   test("rejects missing provider login arg", async () => {
     expect(await main(["provider-login"], testDeps())).toEqual({ code: 2 });
 

@@ -320,6 +320,8 @@ export function parseConfigProviderArgs(args: string[]): ConfigProviderArgs {
 
 export type ProviderArg = { ok: true; provider: string } | { ok: false; error: string };
 
+export type OptionalProviderArg = { ok: true; provider?: string } | { ok: false; error: string };
+
 export function parseSingleProviderArg(command: string, args: string[]): ProviderArg {
   if (args.length !== 1) {
     return { ok: false, error: `${command} requires exactly one provider` };
@@ -328,6 +330,16 @@ export function parseSingleProviderArg(command: string, args: string[]): Provide
     return { ok: false, error: `unknown ${command} option: ${args[0]}` };
   }
   return { ok: true, provider: args[0] as string };
+}
+
+export function parseOptionalProviderArg(command: string, args: string[]): OptionalProviderArg {
+  if (args.length > 1) {
+    return { ok: false, error: `${command} accepts at most one provider` };
+  }
+  if (args[0]?.startsWith("-")) {
+    return { ok: false, error: `unknown ${command} option: ${args[0]}` };
+  }
+  return args[0] ? { ok: true, provider: args[0] } : { ok: true };
 }
 
 export type RecordZArgs =

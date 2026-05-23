@@ -30,7 +30,7 @@ export async function smokePiOpenRouter(options: SmokeOptions): Promise<{ code: 
       console.error("zdr: OPENROUTER_API_KEY is required for provider-smoke --live");
       return { code: 2 };
     }
-    if (isKnownOAuthProvider(provider.name) && !auth) {
+    if ((await isKnownOAuthProvider(provider.name)) && !auth) {
       console.error(`zdr: run 'zdr provider-login ${provider.name}' before provider-smoke --live`);
       return { code: 2 };
     }

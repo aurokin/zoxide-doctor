@@ -94,7 +94,7 @@ export async function resolveProviderApiKey(provider: string): Promise<string | 
 }
 
 export async function resolveProviderAuth(provider: string): Promise<ProviderAuth | undefined> {
-  if (!isKnownOAuthProvider(provider)) {
+  if (!(await isKnownOAuthProvider(provider))) {
     return undefined;
   }
 
@@ -126,8 +126,8 @@ export async function resolveProviderAuth(provider: string): Promise<ProviderAut
   };
 }
 
-export function isKnownOAuthProvider(provider: string): boolean {
-  return provider === "openai-codex" || provider === "anthropic" || provider === "github-copilot";
+export async function isKnownOAuthProvider(provider: string): Promise<boolean> {
+  return (await getKnownOAuthProviders()).includes(provider);
 }
 
 export async function readAuthStore(path = getAuthPath()): Promise<AuthStore> {
@@ -163,7 +163,7 @@ async function writeAuthStore(store: AuthStore, path = getAuthPath()): Promise<v
   }
 }
 
-async function getKnownOAuthProviders(): Promise<string[]> {
+export async function getKnownOAuthProviders(): Promise<string[]> {
   const { getOAuthProviders } = await import("@earendil-works/pi-ai/oauth");
   return getOAuthProviders().map((provider: { id: string }) => provider.id);
 }

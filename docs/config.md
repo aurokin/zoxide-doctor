@@ -76,6 +76,8 @@ Provider-backed selection, `provider-smoke`, and provider timing diagnostics use
 - The default model is `google/gemini-2.5-flash-lite`.
 - `provider.name` must be a provider known to Pi (`@earendil-works/pi-ai`).
 - `provider.model` must be one of Pi's known model IDs for that provider.
+- `zdr provider-list` lists Pi providers, model counts, and OAuth support.
+- `zdr provider-list <provider>` lists the known model IDs for one provider.
 - `zdr provider-smoke` checks provider/model lookup without making a network call.
 - `zdr provider-smoke --live` makes a tiny completion request and requires the provider's API key or OAuth login.
 

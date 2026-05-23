@@ -9,6 +9,7 @@ import {
   parseDebugTimingArgs,
   parseFinishZArgs,
   parseLimit,
+  parseOptionalProviderArg,
   parsePruneEventsArgs,
   parseRecordZArgs,
   parseSingleProviderArg,
@@ -116,6 +117,11 @@ describe("cli arg parsers", () => {
     expect(parseSingleProviderArg("provider-login", ["openai-codex"])).toEqual({
       ok: true,
       provider: "openai-codex",
+    });
+    expect(parseOptionalProviderArg("provider-list", [])).toEqual({ ok: true });
+    expect(parseOptionalProviderArg("provider-list", ["openrouter"])).toEqual({
+      ok: true,
+      provider: "openrouter",
     });
   });
 
