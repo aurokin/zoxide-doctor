@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/logo.png" alt="Zoxide Doctor" width="220" />
+</p>
+
 # Zoxide Doctor
 
 Zoxide Doctor (`zdr`) is a small LLM-powered doctor for bad [zoxide](https://github.com/ajeetdsouza/zoxide) jumps.
