@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.2.0 - 2026-07-12
+
+- Changed the default provider to `openai-codex` / `gpt-5.6-terra` (low reasoning effort), running on ChatGPT-plan OAuth instead of an API key.
+- Added a backend layer with an optional `escalation` config tier; the second recovery attempt can route to a different backend.
+- Added a Claude escalation backend using the Claude Agent SDK with subscription login (API-key environment deliberately excluded).
+- Added read-only import of Pi CLI OAuth logins from `~/.pi/agent/auth.json`, with fallback re-import when a stored credential stops working.
+- Added `zdr provider-discover` for token-free readiness reporting across backends and tiers, including an escalation setup tip.
+- Added `zdr config-escalation` to set or clear the escalation tier.
+- Added recovery alias memory: picker selections and confident repairs are remembered and injected into future candidate lists; rejected suggestions are forgotten.
+- Added a live evaluation suite with an adversarial filesystem corpus, offline recall mode, spend-gated live mode, repeat-consistency reporting, and a telemetry-to-case mining script.
+- Improved the selection prompt for verbatim-name decoys and no-good-answer discipline (live accuracy 90% to 96% on the eval suite).
+- Migrated to pi-ai 0.80 (`/compat` entrypoint), added reasoning-model token headroom, surfaced provider errors (including truncation), and worked around Codex client-identity gating of `gpt-5.6-luna`.
+- Hardened auth storage with serialized writes and unique temp files.
+
 ## 0.1.0 - 2026-05-23
 
 - Added the core no-arg recovery flow after bad `z` jumps.

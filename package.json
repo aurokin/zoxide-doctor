@@ -1,6 +1,6 @@
 {
   "name": "zoxide-doctor",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "A small LLM-powered doctor for bad zoxide jumps.",
   "type": "module",
   "packageManager": "bun@1.3.14",
