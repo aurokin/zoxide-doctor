@@ -143,6 +143,9 @@ function testDeps(overrides: Partial<Omit<NavigationDeps, "cwd" | "now">> & { cw
     selectCandidate: async () => {
       throw new Error("unexpected model selection");
     },
+    selectWithBackend: async () => {
+      throw new Error("unexpected backend selection");
+    },
     runPicker: async () => {
       throw new Error("unexpected picker");
     },

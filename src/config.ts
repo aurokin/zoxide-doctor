@@ -22,6 +22,11 @@ export type ZdrConfig = {
     enabled: boolean;
     max_events: number;
   };
+  escalation?: {
+    backend: "pi" | "claude";
+    name?: string;
+    model: string;
+  };
 };
 
 export type ConfigPaths = {
@@ -38,8 +43,8 @@ export type LoadedConfig = {
 export const DEFAULT_CONFIG: ZdrConfig = {
   schema_version: 1,
   provider: {
-    name: "openrouter",
-    model: "google/gemini-2.5-flash-lite",
+    name: "openai-codex",
+    model: "gpt-5.6-terra",
   },
   privacy: {
     redact_home: true,
@@ -58,11 +63,13 @@ export const DEFAULT_CONFIG: ZdrConfig = {
   },
 };
 
-const TOP_LEVEL_KEYS = ["schema_version", "provider", "privacy", "context", "telemetry"];
+const TOP_LEVEL_KEYS = ["schema_version", "provider", "privacy", "context", "telemetry", "escalation"];
 const PROVIDER_KEYS = ["name", "model"];
 const PRIVACY_KEYS = ["redact_home", "redact_emails", "redact_secrets", "redact_tokens"];
 const CONTEXT_KEYS = ["default_dir", "include_dirs", "exclude_dirs"];
 const TELEMETRY_KEYS = ["enabled", "max_events"];
+const ESCALATION_KEYS = ["backend", "name", "model"];
+const ESCALATION_BACKENDS = ["pi", "claude"];
 const MAX_TELEMETRY_EVENTS = 100_000;
 
 export function getConfigPaths(env: NodeJS.ProcessEnv = process.env): ConfigPaths {
@@ -115,6 +122,37 @@ export async function setProviderConfig(
   };
 }
 
+export async function setEscalationConfig(
+  escalation: NonNullable<ZdrConfig["escalation"]>,
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<LoadedConfig> {
+  const current = await loadConfig(env);
+  const config: ZdrConfig = {
+    ...current.config,
+    escalation,
+  };
+  const path = getConfigPaths(env).config;
+  await writeConfigFile(path, config);
+  return {
+    path,
+    source: "file",
+    config,
+  };
+}
+
+export async function clearEscalationConfig(env: NodeJS.ProcessEnv = process.env): Promise<LoadedConfig> {
+  const current = await loadConfig(env);
+  const { escalation: _escalation, ...rest } = current.config;
+  const config: ZdrConfig = { ...rest };
+  const path = getConfigPaths(env).config;
+  await writeConfigFile(path, config);
+  return {
+    path,
+    source: "file",
+    config,
+  };
+}
+
 function mergeConfig(raw: unknown): ZdrConfig {
   if (!isRecord(raw)) {
     throw new Error("config did not match expected schema");
@@ -133,10 +171,13 @@ function mergeConfig(raw: unknown): ZdrConfig {
   rejectUnknownKeys(context, CONTEXT_KEYS, "config context");
   rejectUnknownKeys(telemetry, TELEMETRY_KEYS, "config telemetry");
 
+  const providerName = optionalString(provider.name, DEFAULT_CONFIG.provider.name, "provider.name");
+  const escalation = parseEscalation(raw.escalation, providerName);
+
   return {
     schema_version: 1,
     provider: {
-      name: optionalString(provider.name, DEFAULT_CONFIG.provider.name, "provider.name"),
+      name: providerName,
       model: optionalString(provider.model, DEFAULT_CONFIG.provider.model, "provider.model"),
     },
     privacy: {
@@ -154,7 +195,41 @@ function mergeConfig(raw: unknown): ZdrConfig {
       enabled: optionalBoolean(telemetry.enabled, DEFAULT_CONFIG.telemetry.enabled, "telemetry.enabled"),
       max_events: optionalNonNegativeInteger(telemetry.max_events, DEFAULT_CONFIG.telemetry.max_events, "telemetry.max_events"),
     },
+    ...(escalation ? { escalation } : {}),
   };
+}
+
+function parseEscalation(value: unknown, fallbackProviderName: string): ZdrConfig["escalation"] {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!isRecord(value)) {
+    throw new Error("config escalation must be an object");
+  }
+  rejectUnknownKeys(value, ESCALATION_KEYS, "config escalation");
+
+  const backend = value.backend === undefined ? "pi" : value.backend;
+  if (backend !== "pi" && backend !== "claude") {
+    throw new Error(`config escalation.backend must be one of ${ESCALATION_BACKENDS.join(", ")}`);
+  }
+  const model = requiredString(value.model, "escalation.model");
+
+  if (backend === "claude") {
+    if (value.name !== undefined) {
+      throw new Error("config escalation.name is not allowed when backend is claude");
+    }
+    return { backend, model };
+  }
+
+  const name = value.name === undefined ? fallbackProviderName : requiredString(value.name, "escalation.name");
+  return { backend, name, model };
+}
+
+function requiredString(value: unknown, key: string): string {
+  if (typeof value !== "string" || value.trim().length === 0) {
+    throw new Error(`config ${key} must be a non-empty string`);
+  }
+  return value;
 }
 
 function optionalRecord(value: unknown, key: string): Record<string, unknown> {

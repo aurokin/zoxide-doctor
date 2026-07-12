@@ -1,5 +1,6 @@
 import { getCachePaths } from "../corrections.js";
 import {
+  parseConfigEscalationArgs,
   parseConfigProviderArgs,
   parseOptionalProviderArg,
   parseSingleProviderArg,
@@ -21,13 +22,24 @@ export type ProviderCommandResult = {
   code: number;
 };
 
+export type ClaudeProbe = {
+  present: boolean;
+  loggedIn?: boolean;
+  email?: string;
+};
+
 export type ProviderCommandDeps = {
   loadConfig: () => Promise<LoadedConfig>;
   setProviderConfig: (provider: ZdrConfig["provider"]) => Promise<LoadedConfig>;
+  setEscalationConfig: (escalation: NonNullable<ZdrConfig["escalation"]>) => Promise<LoadedConfig>;
+  clearEscalationConfig: () => Promise<LoadedConfig>;
   providerLogin: (provider: string, callbacks: OAuthLoginCallbacks) => Promise<void>;
   providerLogout: (provider: string) => Promise<boolean>;
   providerAuthStatuses: (providers?: string[]) => Promise<ProviderAuthStatus[]>;
   commandExists: (command: string) => boolean;
+  claudeProbe: () => Promise<ClaudeProbe>;
+  codexFilePresent: () => Promise<boolean>;
+  piSharedProviders: () => Promise<string[]>;
 };
 
 type DoctorCheck = {
@@ -78,7 +90,7 @@ export async function doctorCommand(args: string[], deps: ProviderCommandDeps): 
   const provider = loaded?.config.provider ?? null;
   let providerInfo: Record<string, unknown> | null = null;
   if (provider) {
-    const { findEnvKeys } = await import("@earendil-works/pi-ai");
+    const { findEnvKeys } = await import("@earendil-works/pi-ai/compat");
     const model = await resolveConfiguredModel(provider);
     checks.push({
       name: "provider_model",
@@ -204,6 +216,151 @@ export async function configProviderCommand(
     return { code: 1 };
   }
 }
+
+export async function configEscalationCommand(
+  args: string[],
+  deps: ProviderCommandDeps,
+): Promise<ProviderCommandResult> {
+  const parsed = parseConfigEscalationArgs(args);
+  if (!parsed.ok) {
+    console.error(`zdr: ${parsed.error}`);
+    return { code: 2 };
+  }
+  try {
+    if (parsed.clear) {
+      const config = await deps.clearEscalationConfig();
+      console.log(
+        JSON.stringify({ schema_version: 1, path: config.path, escalation: config.config.escalation ?? null }, null, 2),
+      );
+      return { code: 0 };
+    }
+
+    if (parsed.backend === "claude") {
+      if (!deps.commandExists("claude")) {
+        console.error("zdr: claude executable not found on PATH; install Claude Code and run 'claude' to log in");
+        return { code: 1 };
+      }
+      const config = await deps.setEscalationConfig({ backend: "claude", model: parsed.model });
+      console.log(JSON.stringify({ schema_version: 1, path: config.path, escalation: config.config.escalation }, null, 2));
+      return { code: 0 };
+    }
+
+    const name = parsed.providerName ?? (await deps.loadConfig()).config.provider.name;
+    const model = await resolveConfiguredModel({ name, model: parsed.model });
+    if (!model) {
+      console.error(`zdr: Pi did not return configured ${name} model ${parsed.model}`);
+      return { code: 1 };
+    }
+    const config = await deps.setEscalationConfig({ backend: "pi", name, model: parsed.model });
+    console.log(JSON.stringify({ schema_version: 1, path: config.path, escalation: config.config.escalation }, null, 2));
+    return { code: 0 };
+  } catch (error) {
+    console.error(`zdr: ${error instanceof Error ? error.message : String(error)}`);
+    return { code: 1 };
+  }
+}
+
+export async function providerDiscoverCommand(
+  args: string[],
+  deps: ProviderCommandDeps,
+): Promise<ProviderCommandResult> {
+  if (args.length > 0) {
+    console.error(`zdr: unknown provider-discover option: ${args[0]}`);
+    return { code: 2 };
+  }
+  try {
+    const { findEnvKeys } = await import("@earendil-works/pi-ai/compat");
+    const config = (await deps.loadConfig()).config;
+    const lines: string[] = [];
+
+    const claude = await deps.claudeProbe();
+    const claudeReady = claude.present && claude.loggedIn === true;
+    lines.push(
+      claudeReady
+        ? `${GLYPH_OK} claude (escalation tier): logged in${claude.email ? ` as ${claude.email}` : ""}`
+        : claude.present
+          ? `${GLYPH_ATTN} claude (escalation tier): installed, not logged in (run 'claude' to log in)`
+          : `${GLYPH_MISSING} claude (escalation tier): not found on PATH`,
+    );
+
+    const escalationProviderName =
+      config.escalation && config.escalation.backend !== "claude"
+        ? config.escalation.name ?? config.provider.name
+        : undefined;
+    const oauthProviderNames = [
+      ...new Set(["openai-codex", config.provider.name, ...(escalationProviderName ? [escalationProviderName] : [])]),
+    ];
+    const authStatuses = await deps.providerAuthStatuses(oauthProviderNames);
+    const oauthUsable = (name: string) => {
+      const status = authStatuses.find((entry) => entry.provider === name);
+      // An expired access token with a refresh token is still usable: the next
+      // provider call refreshes it through resolveProviderAuth.
+      return status?.authenticated === true && (status.expired !== true || status.refresh_available === true);
+    };
+    const piProviders = await deps.piSharedProviders();
+    const providerReady = (name: string) =>
+      oauthUsable(name) || piProviders.includes(name) || providerEnvReady(name, findEnvKeys);
+    const codexInZdr = oauthUsable("openai-codex");
+    const codexInPi = piProviders.includes("openai-codex");
+    const codexFile = await deps.codexFilePresent();
+    lines.push(
+      codexInZdr
+        ? `${GLYPH_OK} codex (pi oauth: openai-codex) (fast + escalation): zdr login present`
+        : codexInPi
+          ? `${GLYPH_OK} codex (pi oauth: openai-codex) (fast + escalation): available in Pi shared store (imported on first use)`
+          : codexFile
+            ? `${GLYPH_ATTN} codex (pi oauth: openai-codex) (fast + escalation): ~/.codex/auth.json present; run 'zdr provider-login openai-codex' or 'pi' login to use`
+            : `${GLYPH_MISSING} codex (pi oauth: openai-codex) (fast + escalation): no login found`,
+    );
+
+    lines.push(
+      piProviders.length > 0
+        ? `${GLYPH_OK} pi shared store: ${piProviders.join(", ")}`
+        : `${GLYPH_ATTN} pi shared store: no providers`,
+    );
+
+    const envProviderNames = [...new Set([config.provider.name, "openrouter"])];
+    for (const name of envProviderNames) {
+      const envKeys = findEnvKeys(name) ?? [];
+      if (envKeys.length === 0) {
+        lines.push(`${GLYPH_ATTN} env-key provider ${name}: no env key known`);
+        continue;
+      }
+      const setKey = envKeys.find((key) => (process.env[key]?.trim() ?? "") !== "");
+      lines.push(
+        setKey
+          ? `${GLYPH_OK} env-key provider ${name}: ${setKey} is set`
+          : `${GLYPH_MISSING} env-key provider ${name}: set ${envKeys.join(" or ")}`,
+      );
+    }
+
+    const fastReady = providerReady(config.provider.name);
+    const escalationReady = config.escalation
+      ? config.escalation.backend === "claude"
+        ? claudeReady
+        : providerReady(escalationProviderName ?? config.provider.name)
+      : fastReady;
+    lines.push(
+      "",
+      `fast tier: ${fastReady ? "ready" : "needs attention"}; escalation tier: ${escalationReady ? "ready" : "needs attention"}`,
+    );
+
+    console.log(lines.join("\n"));
+    return { code: 0 };
+  } catch (error) {
+    console.error(`zdr: ${error instanceof Error ? error.message : String(error)}`);
+    return { code: 1 };
+  }
+}
+
+function providerEnvReady(name: string, findEnvKeys: (provider: string) => string[] | undefined): boolean {
+  const envKeys = findEnvKeys(name) ?? [];
+  return envKeys.some((key) => (process.env[key]?.trim() ?? "") !== "");
+}
+
+const GLYPH_OK = "✓";
+const GLYPH_ATTN = "→";
+const GLYPH_MISSING = "✗";
 
 export async function providerListCommand(args: string[]): Promise<ProviderCommandResult> {
   const parsed = parseOptionalProviderArg("provider-list", args);

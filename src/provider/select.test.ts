@@ -15,14 +15,19 @@ const malformedProviderText = `${"x".repeat(150)} auro@example.com sk-live-secre
 let tempDir: string;
 let previousXdgConfigHome: string | undefined;
 
-mock.module("@earendil-works/pi-ai", () => ({
+mock.module("@earendil-works/pi-ai/compat", () => ({
   completeSimple,
-  getProviders: () => ["openrouter", "openai-codex", "fireworks"],
+  getProviders: () => ["openrouter", "openai-codex", "fireworks", "cerebras"],
   getModels: (provider: string) =>
     ({
-      "openai-codex": [{ id: "gpt-5.3-codex-spark" }],
+      "openai-codex": [
+        { id: "gpt-5.3-codex-spark" },
+        { id: "gpt-5.6-luna", reasoning: true },
+        { id: "gpt-5.6-terra", reasoning: true },
+      ],
       fireworks: [{ id: "accounts/fireworks/models/gpt-oss-20b" }],
       openrouter: [{ id: "google/gemini-2.5-flash-lite" }],
+      cerebras: [{ id: "gpt-oss-120b", reasoning: true }],
     })[provider] ?? [],
 }));
 
@@ -75,6 +80,7 @@ describe("selectCandidate", () => {
     await selectCandidate({
       state: finishedZState(),
       candidates: [candidate()],
+      provider: { name: "openrouter", model: "google/gemini-2.5-flash-lite" },
       reasoning: "high",
     });
 
@@ -94,6 +100,7 @@ describe("selectCandidate", () => {
     const result = await selectCandidate({
       state: finishedZState(),
       candidates: [candidate()],
+      provider: { name: "openrouter", model: "google/gemini-2.5-flash-lite" },
     });
 
     const call = completeSimple.mock.calls[0] as unknown[] | undefined;
@@ -129,8 +136,89 @@ describe("selectCandidate", () => {
     expect(call?.[2]).toMatchObject({
       maxTokens: 256,
       reasoning: "minimal",
+      // Codex backend must use SSE so the Codex CLI identity override (fetch
+      // wrapper) is applied; WebSocket would bypass it. Regression guard so
+      // spark and other codex models keep working through the fetch path.
+      transport: "sse",
     });
     expect(call?.[2]).not.toHaveProperty("temperature");
+  });
+
+  test("routes reasoning Codex models (gpt-5.6-luna) over SSE with headroom", async () => {
+    completeSimple.mockImplementationOnce(async () => ({
+      content: [{ type: "text", text: '{"candidate_id":"c001","confidence":0.8,"reason":"selected"}' }],
+      usage: null,
+    }));
+
+    await selectCandidate({
+      state: finishedZState(),
+      candidates: [candidate()],
+      provider: {
+        name: "openai-codex",
+        model: "gpt-5.6-luna",
+      },
+      reasoning: "low",
+    });
+
+    const call = completeSimple.mock.calls[0] as unknown[] | undefined;
+    expect(call?.[2]).toMatchObject({
+      maxTokens: 2048,
+      reasoning: "low",
+      transport: "sse",
+    });
+    expect(call?.[2]).not.toHaveProperty("temperature");
+  });
+
+  test("gives reasoning models more max tokens of headroom", async () => {
+    completeSimple.mockImplementationOnce(async () => ({
+      content: [{ type: "text", text: '{"candidate_id":"c001","confidence":0.8,"reason":"selected"}' }],
+      usage: null,
+    }));
+
+    await selectCandidate({
+      state: finishedZState(),
+      candidates: [candidate()],
+      provider: {
+        name: "cerebras",
+        model: "gpt-oss-120b",
+      },
+    });
+
+    const call = completeSimple.mock.calls[0] as unknown[] | undefined;
+    expect(call?.[2]).toMatchObject({
+      maxTokens: 2048,
+    });
+  });
+
+  test("reports a truncated response instead of missing JSON", async () => {
+    completeSimple.mockImplementationOnce(async () => ({
+      content: [{ type: "text", text: '{"candidate_id' }],
+      usage: null,
+      stopReason: "length",
+    }));
+
+    await expect(
+      selectCandidate({
+        state: finishedZState(),
+        candidates: [candidate()],
+      }),
+    ).rejects.toThrow("response was truncated before completing JSON (hit max tokens)");
+  });
+
+  test("surfaces provider error messages", async () => {
+    completeSimple.mockImplementationOnce(async () => ({
+      content: [],
+      usage: null,
+      stopReason: "error",
+      errorMessage: "Codex error: Model not found gpt-5.6-luna-free-1p-codexswic-ev3",
+    }));
+
+    await expect(
+      selectCandidate({
+        state: finishedZState(),
+        candidates: [candidate()],
+      }),
+    ).rejects.toThrow("provider returned an error: Codex error: Model not found");
   });
 
   test("defaults Fireworks to minimal reasoning", async () => {

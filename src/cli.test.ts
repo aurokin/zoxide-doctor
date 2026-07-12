@@ -15,6 +15,7 @@ import {
 } from "./corrections.js";
 import type { PickerInput, PickerResult } from "./picker.js";
 import type { OAuthLoginCallbacks, ProviderAuthStatus } from "./provider/auth.js";
+import type { CliDeps } from "./runtime-deps.js";
 import type { TelemetryEvent, TelemetryInput, TelemetryPruneResult } from "./telemetry.js";
 
 let previousXdgCacheHome: string | undefined;
@@ -1149,6 +1150,203 @@ describe("main config commands", () => {
     expect(stdout).toEqual([]);
     expect(stderr).toEqual(["zdr: config-provider requires provider and model"]);
   });
+
+  test("sets a claude escalation block after verifying the claude executable", async () => {
+    const config = defaultLoadedConfig({ escalation: { backend: "claude", model: "sonnet" } });
+    let written: unknown;
+    expect(
+      await main(
+        ["config-escalation", "claude", "sonnet"],
+        testDeps({
+          commandExists: (command) => command === "claude",
+          setEscalationConfig: async (escalation) => {
+            written = escalation;
+            return config;
+          },
+        }),
+      ),
+    ).toEqual({ code: 0 });
+
+    expect(written).toEqual({ backend: "claude", model: "sonnet" });
+    expect(JSON.parse(stdout.join("\n"))).toEqual({
+      schema_version: 1,
+      path: config.path,
+      escalation: { backend: "claude", model: "sonnet" },
+    });
+    expect(stderr).toEqual([]);
+  });
+
+  test("rejects a claude escalation block when the claude executable is missing", async () => {
+    expect(
+      await main(["config-escalation", "claude", "sonnet"], testDeps({ commandExists: () => false })),
+    ).toEqual({ code: 1 });
+
+    expect(stdout).toEqual([]);
+    expect(stderr).toEqual([
+      "zdr: claude executable not found on PATH; install Claude Code and run 'claude' to log in",
+    ]);
+  });
+
+  test("clears the escalation block", async () => {
+    const config = defaultLoadedConfig();
+    let cleared = false;
+    expect(
+      await main(
+        ["config-escalation", "--clear"],
+        testDeps({
+          clearEscalationConfig: async () => {
+            cleared = true;
+            return config;
+          },
+        }),
+      ),
+    ).toEqual({ code: 0 });
+
+    expect(cleared).toBe(true);
+    expect(JSON.parse(stdout.join("\n"))).toEqual({
+      schema_version: 1,
+      path: config.path,
+      escalation: null,
+    });
+    expect(stderr).toEqual([]);
+  });
+
+  test("rejects --provider on a claude escalation block", async () => {
+    expect(
+      await main(["config-escalation", "claude", "sonnet", "--provider", "openrouter"], testDeps()),
+    ).toEqual({ code: 2 });
+
+    expect(stdout).toEqual([]);
+    expect(stderr).toEqual(["zdr: --provider is not allowed when backend is claude"]);
+  });
+});
+
+describe("main provider-discover command", () => {
+  test("reports claude, codex, and shared-store readiness", async () => {
+    expect(
+      await main(
+        ["provider-discover"],
+        testDeps({
+          loadConfig: async () => defaultLoadedConfig(),
+          claudeProbe: async () => ({ present: true, loggedIn: true, email: "user@example.com" }),
+          providerAuthStatuses: async () => [{ provider: "openai-codex", authenticated: false }],
+          piSharedProviders: async () => ["openai-codex"],
+          codexFilePresent: async () => true,
+        }),
+      ),
+    ).toEqual({ code: 0 });
+
+    const output = stdout.join("\n");
+    expect(output).toContain("claude (escalation tier): logged in as user@example.com");
+    expect(output).toContain("codex (pi oauth: openai-codex) (fast + escalation): available in Pi shared store");
+    expect(output).toContain("pi shared store: openai-codex");
+    expect(output).toContain("env-key provider openrouter");
+    expect(output).toContain("escalation tier:");
+    expect(stderr).toEqual([]);
+  });
+
+  test("reports missing claude and codex logins", async () => {
+    expect(
+      await main(
+        ["provider-discover"],
+        testDeps({
+          loadConfig: async () => defaultLoadedConfig(),
+          claudeProbe: async () => ({ present: false }),
+          providerAuthStatuses: async () => [{ provider: "openai-codex", authenticated: false }],
+          piSharedProviders: async () => [],
+          codexFilePresent: async () => false,
+        }),
+      ),
+    ).toEqual({ code: 0 });
+
+    const output = stdout.join("\n");
+    expect(output).toContain("claude (escalation tier): not found on PATH");
+    expect(output).toContain("codex (pi oauth: openai-codex) (fast + escalation): no login found");
+    expect(stderr).toEqual([]);
+  });
+
+  test("fast tier is not ready when the configured provider's env key is unset despite codex OAuth", async () => {
+    const previousOpenRouter = process.env.OPENROUTER_API_KEY;
+    delete process.env.OPENROUTER_API_KEY;
+    try {
+      expect(
+        await main(
+          ["provider-discover"],
+          testDeps({
+            loadConfig: async () => defaultLoadedConfig({ provider: { name: "openrouter", model: "google/gemini-2.5-flash-lite" } }),
+            claudeProbe: async () => ({ present: false }),
+            providerAuthStatuses: async () => [
+              { provider: "openai-codex", authenticated: true, type: "oauth", expired: false, refresh_available: true },
+            ],
+            piSharedProviders: async () => ["openai-codex"],
+            codexFilePresent: async () => true,
+          }),
+        ),
+      ).toEqual({ code: 0 });
+
+      const output = stdout.join("\n");
+      // The codex line still reports the credential as available...
+      expect(output).toContain("codex (pi oauth: openai-codex) (fast + escalation): zdr login present");
+      // ...but the configured openrouter provider cannot run, so fast tier is not ready.
+      expect(output).toContain("fast tier: needs attention");
+      expect(stderr).toEqual([]);
+    } finally {
+      if (previousOpenRouter === undefined) {
+        delete process.env.OPENROUTER_API_KEY;
+      } else {
+        process.env.OPENROUTER_API_KEY = previousOpenRouter;
+      }
+    }
+  });
+
+  test("fast tier is ready when the configured openai-codex provider has a Pi shared credential", async () => {
+    expect(
+      await main(
+        ["provider-discover"],
+        testDeps({
+          loadConfig: async () => defaultLoadedConfig({ provider: { name: "openai-codex", model: "gpt-5.3-codex-spark" } }),
+          claudeProbe: async () => ({ present: false }),
+          providerAuthStatuses: async () => [{ provider: "openai-codex", authenticated: false }],
+          piSharedProviders: async () => ["openai-codex"],
+          codexFilePresent: async () => false,
+        }),
+      ),
+    ).toEqual({ code: 0 });
+
+    const output = stdout.join("\n");
+    expect(output).toContain("fast tier: ready");
+    expect(stderr).toEqual([]);
+  });
+
+  test("treats an expired zdr credential with a refresh token as ready", async () => {
+    expect(
+      await main(
+        ["provider-discover"],
+        testDeps({
+          loadConfig: async () => defaultLoadedConfig({ provider: { name: "openai-codex", model: "gpt-5.6-terra" } }),
+          claudeProbe: async () => ({ present: false }),
+          providerAuthStatuses: async () => [
+            { provider: "openai-codex", authenticated: true, type: "oauth", expired: true, refresh_available: true },
+          ],
+          piSharedProviders: async () => [],
+          codexFilePresent: async () => false,
+        }),
+      ),
+    ).toEqual({ code: 0 });
+
+    const output = stdout.join("\n");
+    // Expired access + usable refresh token: the next provider call refreshes it.
+    expect(output).toContain("codex (pi oauth: openai-codex) (fast + escalation): zdr login present");
+    expect(output).toContain("fast tier: ready");
+    expect(stderr).toEqual([]);
+  });
+
+  test("rejects unknown provider-discover options", async () => {
+    expect(await main(["provider-discover", "--json"], testDeps())).toEqual({ code: 2 });
+
+    expect(stdout).toEqual([]);
+    expect(stderr).toEqual(["zdr: unknown provider-discover option: --json"]);
+  });
 });
 
 describe("main doctor command", () => {
@@ -1443,7 +1641,7 @@ describe("main timing command", () => {
           calls += 1;
           expect(state.shell).toBe("direct-query");
           expect(state.query_argv).toEqual(["ascan"]);
-          expect(provider).toEqual({ name: "openrouter", model: "google/gemini-2.5-flash-lite" });
+          expect(provider).toEqual({ name: "openai-codex", model: "gpt-5.6-terra" });
           return {
             ...selectionResult(candidates[0] ?? null, "selected", 0.9, providerUsage()),
             timings: {
@@ -1463,7 +1661,7 @@ describe("main timing command", () => {
     expect(payload.query).toBe("ascan");
     expect(payload.mode).toBe("direct-query");
     expect(payload.repeat).toBe(2);
-    expect(payload.provider).toEqual({ name: "openrouter", model: "google/gemini-2.5-flash-lite" });
+    expect(payload.provider).toEqual({ name: "openai-codex", model: "gpt-5.6-terra" });
     expect(payload.ok).toBe(true);
     expect(payload.context).toMatchObject({
       zoxide_entry_count: 2,
@@ -1582,12 +1780,12 @@ describe("main timing command", () => {
       event: "context",
       query: "ascan",
       repeat: 2,
-      provider: { name: "openrouter", model: "google/gemini-2.5-flash-lite" },
+      provider: { name: "openai-codex", model: "gpt-5.6-terra" },
     });
     expect(events[1]).toMatchObject({
       command: "benchmark-provider",
       event: "iteration",
-      provider: { name: "openrouter", model: "google/gemini-2.5-flash-lite" },
+      provider: { name: "openai-codex", model: "gpt-5.6-terra" },
       iteration: {
         index: 1,
         ok: true,
@@ -1634,11 +1832,11 @@ describe("main timing command", () => {
       candidate_count: 1,
     });
     expect(payload.benchmarks.map((benchmark) => benchmark.provider)).toEqual([
-      { name: "openrouter", model: "google/gemini-2.5-flash-lite" },
+      { name: "openai-codex", model: "gpt-5.6-terra" },
     ]);
     expect(payload.benchmarks.every((benchmark) => benchmark.summary.success_count === 1)).toBe(true);
     expect(providerCalls).toEqual([
-      { name: "openrouter", model: "google/gemini-2.5-flash-lite" },
+      { name: "openai-codex", model: "gpt-5.6-terra" },
     ]);
     expect(zoxideLoads).toBe(1);
     expect(stderr).toEqual([]);
@@ -2254,11 +2452,17 @@ function testDeps(
     pruneTelemetryEvents?: PruneTelemetryEvents;
     loadConfig?: LoadConfig;
     setProviderConfig?: (provider: LoadedConfig["config"]["provider"]) => Promise<LoadedConfig>;
+    setEscalationConfig?: (escalation: NonNullable<LoadedConfig["config"]["escalation"]>) => Promise<LoadedConfig>;
+    clearEscalationConfig?: () => Promise<LoadedConfig>;
     scanLocalDirectories?: ScanLocalDirectories;
+    selectWithBackend?: CliDeps["selectWithBackend"];
     providerLogin?: (provider: string, callbacks: OAuthLoginCallbacks) => Promise<void>;
     providerLogout?: (provider: string) => Promise<boolean>;
     providerAuthStatuses?: (providers?: string[]) => Promise<ProviderAuthStatus[]>;
     commandExists?: (command: string) => boolean;
+    claudeProbe?: CliDeps["claudeProbe"];
+    codexFilePresent?: () => Promise<boolean>;
+    piSharedProviders?: () => Promise<string[]>;
   } = {},
 ) {
   return {
@@ -2272,6 +2476,11 @@ function testDeps(
     selectCandidate: async () => {
       throw new Error("unexpected model selection");
     },
+    selectWithBackend:
+      input.selectWithBackend ??
+      (async () => {
+        throw new Error("unexpected backend selection");
+      }),
     runPicker: input.runPicker
       ? input.runPicker
       : async () => {
@@ -2292,6 +2501,16 @@ function testDeps(
       (async () => {
         throw new Error("unexpected provider config write");
       }),
+    setEscalationConfig:
+      input.setEscalationConfig ??
+      (async () => {
+        throw new Error("unexpected escalation config write");
+      }),
+    clearEscalationConfig:
+      input.clearEscalationConfig ??
+      (async () => {
+        throw new Error("unexpected escalation config clear");
+      }),
     providerLogin:
       input.providerLogin ??
       (async () => {
@@ -2308,6 +2527,9 @@ function testDeps(
         throw new Error("unexpected provider auth status");
       }),
     commandExists: input.commandExists ?? (() => false),
+    claudeProbe: input.claudeProbe ?? (async () => ({ present: false })),
+    codexFilePresent: input.codexFilePresent ?? (async () => false),
+    piSharedProviders: input.piSharedProviders ?? (async () => []),
     cwd: () => tempDir,
     now: () => new Date("2026-05-18T00:00:00.000Z"),
   };

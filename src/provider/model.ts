@@ -2,7 +2,7 @@ import type { ZdrConfig } from "../config.js";
 import type { ProviderAuth } from "./auth.js";
 
 export async function resolveConfiguredModel(provider: ZdrConfig["provider"], auth?: ProviderAuth) {
-  const { getModels, getProviders } = await import("@earendil-works/pi-ai");
+  const { getModels, getProviders } = await import("@earendil-works/pi-ai/compat");
   const knownProvider = getProviders().find((candidate) => candidate === provider.name);
   if (!knownProvider) {
     return null;

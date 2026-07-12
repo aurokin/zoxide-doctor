@@ -25,6 +25,12 @@ export type SelectionTimings = {
 };
 
 const SELECTION_MAX_TOKENS = 256;
+// Reasoning models spend output tokens on hidden reasoning before emitting the
+// JSON answer, so 256 is routinely exhausted mid-reasoning (stopReason
+// "length") leaving zero usable text. Give them headroom. The answer itself is
+// still a single JSON line — this larger ceiling only covers reasoning, it does
+// not let the response grow.
+const REASONING_SELECTION_MAX_TOKENS = 2048;
 
 export async function selectCandidate(input: {
   state: FinishedZState;
@@ -35,8 +41,15 @@ export async function selectCandidate(input: {
   reasoning?: ProviderReasoning;
 }): Promise<SelectionResult> {
   const startedAt = performance.now();
-  const { completeSimple } = await import("@earendil-works/pi-ai");
+  const { completeSimple } = await import("@earendil-works/pi-ai/compat");
   const provider = input.provider ?? DEFAULT_CONFIG.provider;
+  if (provider.name === "openai-codex") {
+    // pi-ai forces originator "pi" on the Codex backend, which the server
+    // routes to non-existent checkpoints for newer models (e.g. gpt-5.6-luna).
+    // Present the genuine Codex CLI identity instead. See codex-identity.ts.
+    const { ensureCodexClientIdentity } = await import("./codex-identity.js");
+    ensureCodexClientIdentity();
+  }
   const auth = await resolveProviderAuth(provider.name);
   const modelResolveStartedAt = performance.now();
   const model = await resolveConfiguredModel(provider, auth);
@@ -63,7 +76,7 @@ export async function selectCandidate(input: {
     },
     selectionCompletionOptions({
       provider,
-      maxTokens: SELECTION_MAX_TOKENS,
+      maxTokens: model.reasoning ? REASONING_SELECTION_MAX_TOKENS : SELECTION_MAX_TOKENS,
       timeoutMs: 10_000,
       ...(input.reasoning ? { reasoning: input.reasoning } : {}),
       ...(auth ? { apiKey: auth.apiKey } : {}),
@@ -89,7 +102,8 @@ export async function selectCandidate(input: {
   try {
     selection = parseSelectionResponse(rawText, input.candidates);
   } catch (error) {
-    throw new Error(`${error instanceof Error ? error.message : String(error)}; ${providerResponseSummary(rawText)}`);
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new Error(`${detail}; ${providerResponseSummary(rawText, response.stopReason, response.errorMessage)}`);
   }
   const responseParseMs = elapsedMs(responseParseStartedAt);
   return {
@@ -113,9 +127,14 @@ function elapsedMs(start: number): number {
   return Math.max(0, Math.round((performance.now() - start) * 1000) / 1000);
 }
 
-function providerResponseSummary(rawText: string): string {
+function providerResponseSummary(rawText: string, stopReason?: string, errorMessage?: string): string {
+  if (stopReason === "error" && typeof errorMessage === "string" && errorMessage.length > 0) {
+    return `provider returned an error: ${truncateProviderPreview(redactProviderText(errorMessage))}`;
+  }
+  const truncatedNote =
+    stopReason === "length" ? "response was truncated before completing JSON (hit max tokens); " : "";
   const preview = redactProviderText(rawText);
-  return `provider returned ${rawText.length} text chars; preview: ${truncateProviderPreview(preview)}`;
+  return `${truncatedNote}provider returned ${rawText.length} text chars; preview: ${truncateProviderPreview(preview)}`;
 }
 
 function redactProviderText(value: string): string {

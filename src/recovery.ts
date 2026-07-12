@@ -1,3 +1,5 @@
+import type { ZdrConfig } from "./config.js";
+import type { BackendTierSpec } from "./provider/backends.js";
 import type { SelectionResult } from "./provider/select.js";
 import { summarizeProviderUsage } from "./provider/usage.js";
 import {
@@ -226,8 +228,10 @@ async function runSelection(
 ) {
   const entries = await deps.loadZoxideEntries();
   const rejectedPaths = retry?.rejected_paths ?? [];
+  const config = (await deps.loadConfig()).config;
+  const escalation = options.announceRetry ? config.escalation : undefined;
   if (options.announceRetry) {
-    console.error("zdr: thinking harder...");
+    console.error(escalation ? `zdr: thinking harder (${escalationLabel(escalation)})...` : "zdr: thinking harder...");
   }
   const candidates = await buildSelectionCandidates({
     state,
@@ -236,16 +240,35 @@ async function runSelection(
     rejectedPaths,
     deps,
   });
-  const config = (await deps.loadConfig()).config;
-  const result = await deps.selectCandidate({
-    state,
-    candidates,
-    rejectedPaths,
-    provider: config.provider,
-    privacy: config.privacy,
-    reasoning: options.announceRetry ? "high" : "minimal",
-  });
+  const result = escalation
+    ? await deps.selectWithBackend(escalationSpec(escalation), {
+        state,
+        candidates,
+        rejectedPaths,
+        privacy: config.privacy,
+        reasoning: "high",
+      })
+    : await deps.selectCandidate({
+        state,
+        candidates,
+        rejectedPaths,
+        provider: config.provider,
+        privacy: config.privacy,
+        reasoning: options.announceRetry ? "high" : "minimal",
+      });
   return { candidates, result, rejectedPaths };
+}
+
+function escalationSpec(escalation: NonNullable<ZdrConfig["escalation"]>): BackendTierSpec {
+  return escalation.backend === "claude"
+    ? { backend: "claude", model: escalation.model }
+    : { backend: "pi", model: escalation.model, ...(escalation.name ? { name: escalation.name } : {}) };
+}
+
+function escalationLabel(escalation: NonNullable<ZdrConfig["escalation"]>): string {
+  return escalation.backend === "claude"
+    ? `claude ${escalation.model}`
+    : `${escalation.name ?? "pi"} ${escalation.model}`;
 }
 
 async function telemetryEnabledFromConfig(deps: NavigationDeps): Promise<boolean> {

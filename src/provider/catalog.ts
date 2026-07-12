@@ -18,7 +18,7 @@ export type ProviderModel = {
 };
 
 export async function listProviders(providerName?: string): Promise<ProviderCatalog> {
-  const { getModels, getProviders } = await import("@earendil-works/pi-ai");
+  const { getModels, getProviders } = await import("@earendil-works/pi-ai/compat");
   const { getKnownOAuthProviders } = await import("./auth.js");
   const providerNames = getProviders();
   const oauthProviders = new Set(await getKnownOAuthProviders());

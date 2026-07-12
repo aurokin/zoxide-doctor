@@ -100,6 +100,9 @@ function depsWithCwd(cwd: string): NavigationDeps {
     selectCandidate: async () => {
       throw new Error("unexpected model selection");
     },
+    selectWithBackend: async () => {
+      throw new Error("unexpected backend selection");
+    },
     runPicker: async () => {
       throw new Error("unexpected picker");
     },

@@ -9,7 +9,7 @@ type SmokeOptions = {
 };
 
 export async function smokePiOpenRouter(options: SmokeOptions): Promise<{ code: number }> {
-  const { completeSimple } = await import("@earendil-works/pi-ai");
+  const { completeSimple } = await import("@earendil-works/pi-ai/compat");
   const provider = options.provider ?? DEFAULT_CONFIG.provider;
   const auth = await resolveProviderAuth(provider.name);
 

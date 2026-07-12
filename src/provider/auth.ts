@@ -47,6 +47,13 @@ export function getAuthPath(env: NodeJS.ProcessEnv = process.env): string {
   return join(getConfigPaths(env).configDir, "auth.json");
 }
 
+export function getPiSharedAuthPath(env: NodeJS.ProcessEnv = process.env): string {
+  const override = env.PI_CODING_AGENT_DIR;
+  const agentDir =
+    override && override.length > 0 ? expandTilde(override, env) : join(homeDir(env), ".pi", "agent");
+  return join(agentDir, "auth.json");
+}
+
 export async function loginProvider(provider: string, callbacks: OAuthLoginCallbacks): Promise<void> {
   const { getOAuthProvider } = await import("@earendil-works/pi-ai/oauth");
   const oauthProvider = getOAuthProvider(provider);
@@ -54,20 +61,30 @@ export async function loginProvider(provider: string, callbacks: OAuthLoginCallb
     throw new Error(`provider does not support OAuth login: ${provider}`);
   }
 
-  const credentials = (await oauthProvider.login(callbacks)) as OAuthCredentials;
-  const store = await readAuthStore();
-  store[provider] = { type: "oauth", ...credentials };
-  await writeAuthStore(store);
+  const credentials = (await oauthProvider.login({
+    ...callbacks,
+    // 0.80 requires these callbacks. zdr only drives the default browser login
+    // flow, so select the default (first) method and never surface a device code.
+    onDeviceCode: () => {},
+    onSelect: async (prompt) => prompt.options[0]?.id,
+  })) as OAuthCredentials;
+  await serializeAuthStoreWrite(async () => {
+    const store = await readAuthStore();
+    store[provider] = { type: "oauth", ...credentials };
+    await writeAuthStore(store);
+  });
 }
 
 export async function logoutProvider(provider: string): Promise<boolean> {
-  const store = await readAuthStore();
-  if (!store[provider]) {
-    return false;
-  }
-  delete store[provider];
-  await writeAuthStore(store);
-  return true;
+  return serializeAuthStoreWrite(async () => {
+    const store = await readAuthStore();
+    if (!store[provider]) {
+      return false;
+    }
+    delete store[provider];
+    await writeAuthStore(store);
+    return true;
+  });
 }
 
 export async function getProviderAuthStatuses(providers?: string[]): Promise<ProviderAuthStatus[]> {
@@ -99,31 +116,55 @@ export async function resolveProviderAuth(provider: string): Promise<ProviderAut
   }
 
   const store = await readAuthStore();
-  const credential = store[provider];
+  const stored = store[provider];
+  // Imported Pi credentials stay in memory only. They are persisted into
+  // zdr's store below, but only once the OAuth exchange succeeds — otherwise
+  // an expired/invalid import would be retained and block later re-imports.
+  const credential = stored ?? (await importPiSharedCredential(provider));
   if (!credential) {
     return undefined;
   }
 
-  const { getOAuthApiKey } = await import("@earendil-works/pi-ai/oauth");
-  const credentials = Object.fromEntries(
-    Object.entries(store).map(([key, value]) => {
-      const { type: _type, ...oauthCredentials } = value;
-      return [key, oauthCredentials];
-    }),
-  );
-  const result = (await getOAuthApiKey(provider, credentials)) as
-    | { apiKey: string; newCredentials: OAuthCredentials }
-    | null;
+  let result = await exchangeOAuthCredential(provider, store, credential);
+  if (!result && stored) {
+    // The zdr-store credential failed the exchange; the Pi CLI store may hold
+    // a fresher login for the same provider, so fall back to importing it.
+    const fallback = await importPiSharedCredential(provider);
+    if (fallback && (fallback.refresh !== stored.refresh || fallback.access !== stored.access)) {
+      result = await exchangeOAuthCredential(provider, store, fallback);
+    }
+  }
   if (!result) {
     return undefined;
   }
 
-  store[provider] = { type: "oauth", ...result.newCredentials };
-  await writeAuthStore(store);
+  await serializeAuthStoreWrite(async () => {
+    const current = await readAuthStore();
+    current[provider] = { type: "oauth", ...result.newCredentials };
+    await writeAuthStore(current);
+  });
   return {
     apiKey: result.apiKey,
     credentials: result.newCredentials,
   };
+}
+
+async function exchangeOAuthCredential(
+  provider: string,
+  store: AuthStore,
+  credential: AuthStore[string],
+): Promise<{ apiKey: string; newCredentials: OAuthCredentials } | null> {
+  const { getOAuthApiKey } = await import("@earendil-works/pi-ai/oauth");
+  const working: AuthStore = { ...store, [provider]: credential };
+  const credentials = Object.fromEntries(
+    Object.entries(working).map(([key, value]) => {
+      const { type: _type, ...oauthCredentials } = value;
+      return [key, oauthCredentials];
+    }),
+  );
+  return (await getOAuthApiKey(provider, credentials)) as
+    | { apiKey: string; newCredentials: OAuthCredentials }
+    | null;
 }
 
 export async function isKnownOAuthProvider(provider: string): Promise<boolean> {
@@ -148,10 +189,28 @@ export async function readAuthStore(path = getAuthPath()): Promise<AuthStore> {
   );
 }
 
+// Serializes read-modify-write of the auth store within this process so
+// concurrent credential persists cannot clobber one another or race on the
+// temp-file rename below.
+let authStoreWriteChain: Promise<unknown> = Promise.resolve();
+
+function serializeAuthStoreWrite<T>(fn: () => Promise<T>): Promise<T> {
+  const run = authStoreWriteChain.then(fn, fn);
+  authStoreWriteChain = run.then(
+    () => undefined,
+    () => undefined,
+  );
+  return run;
+}
+
+// Monotonic counter guarantees a unique temp path even for writes issued in the
+// same process within the same millisecond.
+let tmpWriteCounter = 0;
+
 async function writeAuthStore(store: AuthStore, path = getAuthPath()): Promise<void> {
   const dir = dirname(path);
   await mkdir(dir, { recursive: true, mode: AUTH_DIR_MODE });
-  const tmpPath = `${path}.${process.pid}.${Date.now()}.tmp`;
+  const tmpPath = `${path}.${process.pid}.${Date.now()}.${tmpWriteCounter++}.tmp`;
   await writeFile(tmpPath, `${JSON.stringify(store, null, 2)}\n`, { mode: AUTH_FILE_MODE });
   await chmod(tmpPath, AUTH_FILE_MODE);
   try {
@@ -166,6 +225,57 @@ async function writeAuthStore(store: AuthStore, path = getAuthPath()): Promise<v
 export async function getKnownOAuthProviders(): Promise<string[]> {
   const { getOAuthProviders } = await import("@earendil-works/pi-ai/oauth");
   return getOAuthProviders().map((provider: { id: string }) => provider.id);
+}
+
+export async function readPiSharedProviders(env: NodeJS.ProcessEnv = process.env): Promise<string[]> {
+  const store = await readPiSharedStore(env);
+  return Object.keys(store);
+}
+
+async function importPiSharedCredential(
+  provider: string,
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<OAuthCredential | undefined> {
+  const store = await readPiSharedStore(env);
+  return store[provider];
+}
+
+async function readPiSharedStore(env: NodeJS.ProcessEnv): Promise<AuthStore> {
+  let raw: unknown;
+  try {
+    raw = JSON.parse(await readFile(getPiSharedAuthPath(env), "utf8")) as unknown;
+  } catch {
+    return {};
+  }
+  if (!isRecord(raw)) {
+    return {};
+  }
+  const store: AuthStore = {};
+  for (const [provider, value] of Object.entries(raw)) {
+    try {
+      store[provider] = parseOAuthCredential(provider, value);
+    } catch {
+      // Skip credentials that do not match the expected OAuth shape.
+    }
+  }
+  return store;
+}
+
+function expandTilde(path: string, env: NodeJS.ProcessEnv): string {
+  if (path === "~") {
+    return homeDir(env);
+  }
+  if (path.startsWith("~/")) {
+    return join(homeDir(env), path.slice(2));
+  }
+  return path;
+}
+
+function homeDir(env: NodeJS.ProcessEnv): string {
+  if (env.HOME && env.HOME.length > 0) {
+    return env.HOME;
+  }
+  throw new Error("HOME is required to resolve the Pi shared auth path");
 }
 
 function parseOAuthCredential(provider: string, value: unknown): OAuthCredential {

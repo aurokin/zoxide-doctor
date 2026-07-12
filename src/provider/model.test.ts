@@ -1,7 +1,7 @@
 import { describe, expect, mock, test } from "bun:test";
 import { resolveConfiguredModel } from "./model.js";
 
-mock.module("@earendil-works/pi-ai", () => ({
+mock.module("@earendil-works/pi-ai/compat", () => ({
   getProviders: () => ["github-copilot"],
   getModels: () => [
     {

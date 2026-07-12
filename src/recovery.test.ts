@@ -102,6 +102,54 @@ describe("recovery navigation", () => {
     expect(stderr).toEqual(["zdr: thinking harder..."]);
   });
 
+  test("second attempt routes to the escalation backend when configured", async () => {
+    const first = join(tempDir, "wrong-agentscan");
+    const second = join(tempDir, "agentscan");
+    await mkdir(first);
+    await mkdir(second);
+    await recordFinishedAttempt("attempt-esc", join(tempDir, "wrong"), ["ascan"]);
+    const escalationConfig = {
+      path: join(tempDir, "config.json"),
+      source: "file" as const,
+      config: {
+        ...DEFAULT_CONFIG,
+        telemetry: { enabled: true, max_events: 1000 },
+        escalation: { backend: "claude" as const, model: "sonnet" },
+      },
+    };
+    await recoverCommand({
+      ...testDeps({ loadConfig: async () => escalationConfig }),
+      loadZoxideEntries: async () => [{ path: first, score: 10, rank: 1 }],
+      selectCandidate: async ({ candidates }) => selectionResult(candidates[0] ?? null),
+    });
+    stdout = [];
+    stderr = [];
+
+    let backendSpec: unknown;
+    expect(
+      await recoverCommand({
+        ...testDeps({ loadConfig: async () => escalationConfig }),
+        loadZoxideEntries: async () => [
+          { path: first, score: 10, rank: 1 },
+          { path: second, score: 9, rank: 2 },
+        ],
+        selectCandidate: async () => {
+          throw new Error("fast-tier selection must not run on escalation");
+        },
+        selectWithBackend: async (spec, { reasoning, rejectedPaths, candidates }) => {
+          backendSpec = spec;
+          expect(reasoning).toBe("high");
+          expect(rejectedPaths).toEqual([first]);
+          return selectionResult(candidates.find((candidate) => candidate.path === second) ?? null);
+        },
+      }),
+    ).toEqual({ code: 0 });
+
+    expect(backendSpec).toEqual({ backend: "claude", model: "sonnet" });
+    expect(stdout).toEqual([second]);
+    expect(stderr).toEqual(["zdr: thinking harder (claude sonnet)..."]);
+  });
+
   test("picker recovery emits picker telemetry when model retries are exhausted", async () => {
     const first = join(tempDir, "first");
     const second = join(tempDir, "second");
@@ -171,6 +219,9 @@ function testDeps(overrides: Partial<NavigationDeps> = {}): NavigationDeps {
     scanLocalDirectories: async () => [],
     selectCandidate: async () => {
       throw new Error("unexpected model selection");
+    },
+    selectWithBackend: async () => {
+      throw new Error("unexpected backend selection");
     },
     runPicker: async () => {
       throw new Error("unexpected picker");

@@ -20,9 +20,11 @@ import {
   pruneEventsCommand,
 } from "./local-commands.js";
 import {
+  configEscalationCommand,
   configProviderCommand,
   doctorCommand,
   providerAuthStatusCommand,
+  providerDiscoverCommand,
   providerListCommand,
   providerLoginCommand,
   providerLogoutCommand,
@@ -92,6 +94,8 @@ export async function main(argv: string[], deps: CliDeps = defaultDeps): Promise
       return doctorCommand(args, deps);
     case "config-provider":
       return configProviderCommand(args, deps);
+    case "config-escalation":
+      return configEscalationCommand(args, deps);
     case "prune-events":
       return pruneEventsCommand(args, deps);
     case "forget":
@@ -100,6 +104,8 @@ export async function main(argv: string[], deps: CliDeps = defaultDeps): Promise
       return providerSmokeCommand(args, deps);
     case "provider-list":
       return providerListCommand(args);
+    case "provider-discover":
+      return providerDiscoverCommand(args, deps);
     case "provider-login":
       return providerLoginCommand(args, deps);
     case "provider-logout":
@@ -154,6 +160,10 @@ Usage:
   zdr doctor         Print setup diagnostics as JSON
   zdr config-provider <provider> <model>
                       Set provider.name and provider.model in config
+  zdr config-escalation <backend> <model> [--provider <name>]
+                      Set the escalation tier backend/model (backend: pi|claude)
+  zdr config-escalation --clear
+                      Remove the escalation tier config
   zdr prune-events [--max-events <count>]
                       Keep only the newest local telemetry events
   zdr forget <query> Remove one exact direct-query correction
@@ -162,6 +172,8 @@ Usage:
                       Make a tiny live provider completion
   zdr provider-list [provider]
                       List Pi providers, OAuth support, and provider models
+  zdr provider-discover
+                      Report available fast/escalation tier backends and auth
   zdr provider-login <provider>
                       Log in to an OAuth provider
   zdr provider-logout <provider>

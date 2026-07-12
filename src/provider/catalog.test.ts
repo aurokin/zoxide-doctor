@@ -1,7 +1,7 @@
 import { describe, expect, mock, test } from "bun:test";
 import { listProviders } from "./catalog.js";
 
-mock.module("@earendil-works/pi-ai", () => ({
+mock.module("@earendil-works/pi-ai/compat", () => ({
   getProviders: () => ["openrouter", "openai-codex"],
   getModels: (provider: string) =>
     provider === "openai-codex"

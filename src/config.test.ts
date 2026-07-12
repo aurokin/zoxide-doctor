@@ -2,7 +2,14 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
-import { DEFAULT_CONFIG, getConfigPaths, loadConfig, setProviderConfig } from "./config.js";
+import {
+  clearEscalationConfig,
+  DEFAULT_CONFIG,
+  getConfigPaths,
+  loadConfig,
+  setEscalationConfig,
+  setProviderConfig,
+} from "./config.js";
 
 let previousXdgConfigHome: string | undefined;
 let tempDir: string;
@@ -183,6 +190,83 @@ describe("config", () => {
         },
       },
     });
+  });
+  test("loads a claude escalation block", async () => {
+    await writeConfig({
+      schema_version: 1,
+      escalation: { backend: "claude", model: "sonnet" },
+    });
+
+    await expect(loadConfig()).resolves.toMatchObject({
+      config: { escalation: { backend: "claude", model: "sonnet" } },
+    });
+  });
+
+  test("defaults escalation backend to pi and name to the fast-tier provider", async () => {
+    await writeConfig({
+      schema_version: 1,
+      provider: { name: "openai-codex", model: "gpt-5.3-codex-spark" },
+      escalation: { model: "gpt-5.3-codex" },
+    });
+
+    await expect(loadConfig()).resolves.toMatchObject({
+      config: { escalation: { backend: "pi", name: "openai-codex", model: "gpt-5.3-codex" } },
+    });
+  });
+
+  test("keeps escalation absent when not configured", async () => {
+    await writeConfig({ schema_version: 1 });
+
+    const loaded = await loadConfig();
+    expect(loaded.config.escalation).toBeUndefined();
+  });
+
+  test("rejects escalation name when backend is claude", async () => {
+    await writeConfig({
+      schema_version: 1,
+      escalation: { backend: "claude", name: "openrouter", model: "sonnet" },
+    });
+
+    await expect(loadConfig()).rejects.toThrow("config escalation.name is not allowed when backend is claude");
+  });
+
+  test("rejects escalation without a model", async () => {
+    await writeConfig({
+      schema_version: 1,
+      escalation: { backend: "claude" },
+    });
+
+    await expect(loadConfig()).rejects.toThrow("config escalation.model must be a non-empty string");
+  });
+
+  test("rejects unsupported escalation backend", async () => {
+    await writeConfig({
+      schema_version: 1,
+      escalation: { backend: "gemini", model: "x" },
+    });
+
+    await expect(loadConfig()).rejects.toThrow("config escalation.backend must be one of pi, claude");
+  });
+
+  test("sets and clears the escalation block while preserving other settings", async () => {
+    await writeConfig({
+      schema_version: 1,
+      telemetry: { enabled: true, max_events: 25 },
+    });
+
+    await expect(setEscalationConfig({ backend: "claude", model: "sonnet" })).resolves.toMatchObject({
+      config: {
+        escalation: { backend: "claude", model: "sonnet" },
+        telemetry: { enabled: true, max_events: 25 },
+      },
+    });
+    await expect(loadConfig()).resolves.toMatchObject({
+      config: { escalation: { backend: "claude", model: "sonnet" } },
+    });
+
+    const cleared = await clearEscalationConfig();
+    expect(cleared.config.escalation).toBeUndefined();
+    expect((await loadConfig()).config.escalation).toBeUndefined();
   });
 });
 

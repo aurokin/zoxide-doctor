@@ -7,6 +7,7 @@ export type SelectionCompletionOptions = {
   temperature?: number;
   reasoning?: ProviderReasoning;
   apiKey?: string;
+  transport?: "sse";
 };
 
 export function selectionCompletionOptions(input: {
@@ -17,10 +18,16 @@ export function selectionCompletionOptions(input: {
   apiKey?: string;
 }): SelectionCompletionOptions {
   const reasoning = input.reasoning ?? defaultReasoning(input.provider.name);
+  const isCodex = input.provider.name === "openai-codex";
   return {
     maxTokens: input.maxTokens,
     timeoutMs: input.timeoutMs,
-    ...(input.provider.name === "openai-codex" ? {} : { temperature: 0 }),
+    ...(isCodex ? {} : { temperature: 0 }),
+    // Force SSE for the Codex backend so requests flow through global `fetch`,
+    // where the Codex CLI client-identity override is applied (see
+    // codex-identity.ts). The WebSocket transport bypasses `fetch` and would
+    // strand the override, breaking models like gpt-5.6-luna.
+    ...(isCodex ? { transport: "sse" as const } : {}),
     ...(reasoning ? { reasoning } : {}),
     ...(input.apiKey ? { apiKey: input.apiKey } : {}),
   };

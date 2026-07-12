@@ -3,6 +3,7 @@ import { buildCandidates, shouldAddLocalScanCandidates, type Candidate } from ".
 import { DEFAULT_CONFIG, type LoadedConfig, type ZdrConfig } from "./config.js";
 import type { CorrectionEntry, CorrectionLookup } from "./corrections.js";
 import type { PickerInput, PickerResult } from "./picker.js";
+import type { BackendSelectionInput, BackendTierSpec } from "./provider/backends.js";
 import type { ProviderReasoning, SelectionResult } from "./provider/select.js";
 import type { FinishedZState } from "./shell-state.js";
 import type { TelemetryInput } from "./telemetry.js";
@@ -30,6 +31,7 @@ export type NavigationDeps = {
     privacy?: ZdrConfig["privacy"];
     reasoning?: ProviderReasoning;
   }) => Promise<SelectionResult>;
+  selectWithBackend: (spec: BackendTierSpec, input: BackendSelectionInput) => Promise<SelectionResult>;
   runPicker: (input: PickerInput) => Promise<PickerResult>;
   appendTelemetryEvent: (input: TelemetryInput) => Promise<unknown>;
   loadConfig: () => Promise<LoadedConfig>;

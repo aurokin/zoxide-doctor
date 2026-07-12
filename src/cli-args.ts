@@ -318,6 +318,60 @@ export function parseConfigProviderArgs(args: string[]): ConfigProviderArgs {
   return { ok: true, provider: { name, model } };
 }
 
+export type ConfigEscalationArgs =
+  | { ok: true; clear: true }
+  | { ok: true; clear: false; backend: "pi" | "claude"; model: string; providerName?: string }
+  | { ok: false; error: string };
+
+export function parseConfigEscalationArgs(args: string[]): ConfigEscalationArgs {
+  if (args.length === 1 && args[0] === "--clear") {
+    return { ok: true, clear: true };
+  }
+
+  const positionals: string[] = [];
+  let providerName: string | undefined;
+
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+    if (!arg) {
+      return { ok: false, error: "unexpected missing argument" };
+    }
+    if (arg === "--provider") {
+      const value = args[index + 1];
+      if (!value || value.trim().length === 0 || value.startsWith("-")) {
+        return { ok: false, error: "--provider requires a value" };
+      }
+      providerName = value;
+      index += 1;
+      continue;
+    }
+    if (arg.startsWith("--provider=")) {
+      const value = arg.slice("--provider=".length);
+      if (value.trim().length === 0) {
+        return { ok: false, error: "--provider requires a value" };
+      }
+      providerName = value;
+      continue;
+    }
+    if (arg.startsWith("-")) {
+      return { ok: false, error: `unknown config-escalation option: ${arg}` };
+    }
+    positionals.push(arg);
+  }
+
+  if (positionals.length !== 2) {
+    return { ok: false, error: "config-escalation requires backend and model" };
+  }
+  const [backend, model] = positionals;
+  if (backend !== "pi" && backend !== "claude") {
+    return { ok: false, error: "config-escalation backend must be pi or claude" };
+  }
+  if (backend === "claude" && providerName !== undefined) {
+    return { ok: false, error: "--provider is not allowed when backend is claude" };
+  }
+  return { ok: true, clear: false, backend, model: model as string, ...(providerName ? { providerName } : {}) };
+}
+
 export type ProviderArg = { ok: true; provider: string } | { ok: false; error: string };
 
 export type OptionalProviderArg = { ok: true; provider?: string } | { ok: false; error: string };
