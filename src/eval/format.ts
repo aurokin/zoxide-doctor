@@ -101,6 +101,17 @@ function formatBackendSummary(summary: BackendSummary): string[] {
       ]),
     ),
   );
+  const consistency = summary.consistency;
+  lines.push(
+    `consistency: stability ${pct(consistency.stabilityRate)} ` +
+      `(${consistency.stableCases}/${consistency.totalCases} cases identical across repeats) ` +
+      `| flips ${consistency.flips.length}`,
+  );
+  if (consistency.flips.length > 0) {
+    for (const flip of consistency.flips) {
+      lines.push(`  ${flip.caseId} votes ${flip.correctVotes}/${flip.total} correct`);
+    }
+  }
   lines.push("misses:");
   if (summary.misses.length === 0) {
     lines.push("  (none)");

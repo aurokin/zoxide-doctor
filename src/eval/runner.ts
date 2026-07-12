@@ -33,7 +33,10 @@ export type PreparedCase = {
   state: FinishedZState;
   candidates: Candidate[];
   input: BackendSelectionInput;
+  // Primary accepted path (first of expectedPaths) for display, or null for
+  // no-answer cases. expectedPaths holds the full accepted set.
   expectedPath: string | null;
+  expectedPaths: string[];
   wrongLandingPath: string | null;
   rejectedPaths: string[];
 };
@@ -64,6 +67,10 @@ export function prepareCase(
     finished_at: "2026-01-01T00:00:01.000Z",
   };
 
+  const expectedList =
+    evalCase.expected === null ? [] : Array.isArray(evalCase.expected) ? evalCase.expected : [evalCase.expected];
+  const expectedPaths = expectedList.map(resolve);
+
   const entries = toEntries(evalCase.db.map((entry) => ({ path: resolve(entry.path), score: entry.score })));
   const candidates = buildCandidates({
     state,
@@ -86,7 +93,8 @@ export function prepareCase(
     state,
     candidates,
     input,
-    expectedPath: evalCase.expected ? resolve(evalCase.expected) : null,
+    expectedPath: expectedPaths[0] ?? null,
+    expectedPaths,
     wrongLandingPath,
     rejectedPaths,
   };
@@ -146,7 +154,7 @@ export type RecallReport = {
 };
 
 export function scoreRecallCase(prepared: PreparedCase): RecallCaseResult | NullCaseResult {
-  if (prepared.expectedPath === null) {
+  if (prepared.expectedPaths.length === 0) {
     return {
       id: prepared.case.id,
       category: prepared.case.category,
@@ -154,18 +162,28 @@ export function scoreRecallCase(prepared: PreparedCase): RecallCaseResult | Null
       candidateCount: prepared.candidates.length,
     };
   }
-  const index = prepared.candidates.findIndex((candidate) => candidate.path === prepared.expectedPath);
+  // Best (lowest) rank among all accepted paths; found if any is present.
+  let bestRank: number | null = null;
+  for (const expected of prepared.expectedPaths) {
+    const index = prepared.candidates.findIndex((candidate) => candidate.path === expected);
+    if (index !== -1) {
+      const rank = index + 1;
+      if (bestRank === null || rank < bestRank) {
+        bestRank = rank;
+      }
+    }
+  }
   const topLexical = topLexicalCandidate(prepared.candidates);
   return {
     id: prepared.case.id,
     category: prepared.case.category,
     query: prepared.case.query,
-    expectedPath: prepared.expectedPath,
-    found: index !== -1,
-    rank: index === -1 ? null : index + 1,
+    expectedPath: prepared.expectedPath as string,
+    found: bestRank !== null,
+    rank: bestRank,
     candidateCount: prepared.candidates.length,
     topLexicalPath: topLexical?.path ?? null,
-    topLexicalIsExpected: topLexical?.path === prepared.expectedPath,
+    topLexicalIsExpected: topLexical !== null && prepared.expectedPaths.includes(topLexical.path),
   };
 }
 
@@ -249,6 +267,18 @@ export type LiveRunRecord = {
   error: string | null;
 };
 
+// A case whose per-repeat correctness was not identical across repeats.
+export type CaseFlip = { caseId: string; correctVotes: number; total: number };
+
+// Cross-repeat stability. Meaningful only when repeat > 1; with a single
+// repeat every case is trivially "stable".
+export type ConsistencySummary = {
+  totalCases: number;
+  stableCases: number;
+  stabilityRate: number;
+  flips: CaseFlip[];
+};
+
 export type BackendSummary = {
   backendId: string;
   runs: number;
@@ -260,6 +290,7 @@ export type BackendSummary = {
   nullRecall: number | null;
   latencyP50: number | null;
   latencyP95: number | null;
+  consistency: ConsistencySummary;
   misses: LiveRunRecord[];
   errors: LiveRunRecord[];
 };
@@ -327,7 +358,8 @@ async function runOne(
   timeoutMs: number,
 ): Promise<LiveRunRecord> {
   const expectedPath = prepared.expectedPath;
-  const isNullExpected = expectedPath === null;
+  const expectedPaths = prepared.expectedPaths;
+  const isNullExpected = expectedPaths.length === 0;
   const start = performance.now();
   const base = {
     backendId: backend.id,
@@ -346,7 +378,7 @@ async function runOne(
       ...base,
       pickedPath,
       predictedNull,
-      correct: pickedPath === expectedPath,
+      correct: isNullExpected ? pickedPath === null : pickedPath !== null && expectedPaths.includes(pickedPath),
       latencyMs: roundMs(performance.now() - start),
       confidence: typeof result.selection.confidence === "number" ? result.selection.confidence : null,
       usage: result.usage ?? null,
@@ -397,8 +429,38 @@ export function summarizeBackend(backendId: string, allRecords: LiveRunRecord[])
     nullRecall: expectedNulls.length === 0 ? null : ratio(correctNulls.length, expectedNulls.length),
     latencyP50: percentile(latencies, 0.5),
     latencyP95: percentile(latencies, 0.95),
+    consistency: summarizeConsistency(records),
     misses: records.filter((record) => !record.correct && record.error === null),
     errors,
+  };
+}
+
+// Group a backend's records by case and flag cases whose per-repeat
+// correctness was not unanimous. Stability = share of cases that were
+// identical across every repeat.
+export function summarizeConsistency(records: LiveRunRecord[]): ConsistencySummary {
+  const byCase = new Map<string, boolean[]>();
+  for (const record of records) {
+    const votes = byCase.get(record.caseId) ?? [];
+    votes.push(record.correct);
+    byCase.set(record.caseId, votes);
+  }
+  const flips: CaseFlip[] = [];
+  let stableCases = 0;
+  for (const [caseId, votes] of byCase) {
+    const correctVotes = votes.filter((vote) => vote).length;
+    if (correctVotes === 0 || correctVotes === votes.length) {
+      stableCases += 1;
+    } else {
+      flips.push({ caseId, correctVotes, total: votes.length });
+    }
+  }
+  flips.sort((a, b) => a.caseId.localeCompare(b.caseId));
+  return {
+    totalCases: byCase.size,
+    stableCases,
+    stabilityRate: ratio(stableCases, byCase.size),
+    flips,
   };
 }
 

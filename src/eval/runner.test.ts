@@ -228,6 +228,30 @@ describe("runLive", () => {
     expect(record?.correct).toBe(false);
   });
 
+  test("consistency flags cases whose correctness flips across repeats", async () => {
+    // Backend gets L1 right on repeat 1, then wrong afterwards -> a flip.
+    // L2/L3 are decided deterministically and stay stable.
+    let l1Calls = 0;
+    const backend = fakeBackend("flaky", (caseId, input) => {
+      if (caseId === "L1") {
+        l1Calls += 1;
+        return l1Calls === 1 ? candidateByPathSuffix(input, "/code/api") : null;
+      }
+      return null; // L2 stable-correct (null-expected), L3 stable-wrong
+    });
+
+    const report = await runLive([backend], LIVE_CASES, ROOT, { repeat: 3 });
+    const consistency = report.summaries[0]?.consistency;
+    expect(consistency).toBeDefined();
+    if (!consistency) {
+      return;
+    }
+    expect(consistency.totalCases).toBe(3);
+    expect(consistency.stableCases).toBe(2); // L2 (all correct), L3 (all wrong)
+    expect(consistency.flips).toEqual([{ caseId: "L1", correctVotes: 1, total: 3 }]);
+    expect(consistency.stabilityRate).toBeCloseTo(0.667, 3);
+  });
+
   test("concurrency runs all tasks and preserves counts", async () => {
     const backend = fakeBackend("good", (_caseId, input) => input.candidates[0] ?? null);
     const report = await runLive([backend], LIVE_CASES, ROOT, { repeat: 2, concurrency: 4 });

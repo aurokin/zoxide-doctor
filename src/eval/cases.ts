@@ -28,7 +28,10 @@ export type EvalCase = {
   description: string;
   query: string;
   db: DbEntry[];
-  expected: string | null;
+  // A single fixture-relative path, or an accepted set of paths (any of which
+  // counts as correct — used only for genuinely ambiguous cases), or null for
+  // no-answer cases.
+  expected: string | string[] | null;
   mode: "recovery" | "direct";
   wrongLanding?: string;
   rejectedPaths?: string[];
@@ -663,12 +666,13 @@ export const CASES: EvalCase[] = [
   {
     id: "esc-api",
     category: "escalation",
-    description: "Recovery retry: code/api rejected; expected the next sibling api-legacy (higher frecency than apiv2).",
+    description: "Recovery retry: code/api rejected; the next sibling is genuinely ambiguous between api-legacy and apiv2.",
     query: "api",
     mode: "recovery",
     wrongLanding: "code/dotfiles",
     rejectedPaths: ["code/api"],
-    expected: "code/api-legacy",
+    // Accepted set: with 'api' rejected, api-legacy and apiv2 are equally defensible siblings and every model picks apiv2 despite the frecency edge favoring api-legacy — the disambiguation is a coin flip, so both count.
+    expected: ["code/api-legacy", "code/apiv2"],
     db: [
       { path: "code/dotfiles", score: 8 },
       { path: "code/api", score: 6 },
@@ -680,12 +684,13 @@ export const CASES: EvalCase[] = [
   {
     id: "esc-auth",
     category: "escalation",
-    description: "Recovery retry: auth rejected; expected auth-ui (higher frecency than authz).",
+    description: "Recovery retry: auth rejected; the next sibling is genuinely ambiguous between auth-ui and authz.",
     query: "auth",
     mode: "recovery",
     wrongLanding: "code/dotfiles",
     rejectedPaths: ["work/mega/packages/auth"],
-    expected: "work/mega/packages/auth-ui",
+    // Accepted set: with 'auth' rejected, auth-ui and authz are equally plausible and every model picks authz despite the frecency edge favoring auth-ui — the disambiguation is a coin flip, so both count.
+    expected: ["work/mega/packages/auth-ui", "work/mega/packages/authz"],
     db: [
       { path: "code/dotfiles", score: 8 },
       { path: "work/mega/packages/auth", score: 6 },

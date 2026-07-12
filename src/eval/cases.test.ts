@@ -7,11 +7,15 @@ import { prepareCase } from "./runner.js";
 // candidate stage (adversarial recall failures). Documented in docs/evals.md.
 const KNOWN_RECALL_MISSES = new Set(["abbr-papermario"]);
 
-function referencedPaths(evalCase: EvalCase): string[] {
-  const paths: string[] = [];
-  if (evalCase.expected) {
-    paths.push(evalCase.expected);
+function expectedPaths(evalCase: EvalCase): string[] {
+  if (evalCase.expected === null) {
+    return [];
   }
+  return Array.isArray(evalCase.expected) ? evalCase.expected : [evalCase.expected];
+}
+
+function referencedPaths(evalCase: EvalCase): string[] {
+  const paths: string[] = [...expectedPaths(evalCase)];
   for (const entry of evalCase.db) {
     paths.push(entry.path);
   }
@@ -53,13 +57,12 @@ describe("cases corpus", () => {
     }
   });
 
-  test("every non-null expected is present in its own db", () => {
+  test("every accepted expected path is present in its own db", () => {
     for (const evalCase of CASES) {
-      if (evalCase.expected === null) {
-        continue;
-      }
       const dbPaths = new Set(evalCase.db.map((entry) => entry.path));
-      expect(dbPaths.has(evalCase.expected)).toBe(true);
+      for (const expected of expectedPaths(evalCase)) {
+        expect(dbPaths.has(expected)).toBe(true);
+      }
     }
   });
 
@@ -81,18 +84,18 @@ describe("cases corpus", () => {
     }
   });
 
-  test("non-null expected is discoverable in candidates (except documented recall misses)", () => {
+  test("every accepted expected path is discoverable in candidates (except documented recall misses)", () => {
     for (const evalCase of CASES) {
       if (evalCase.expected === null) {
         continue;
       }
       const prepared = prepareCase(evalCase, "/fake/home");
-      const found = prepared.candidates.some((candidate) => candidate.path === prepared.expectedPath);
-      if (KNOWN_RECALL_MISSES.has(evalCase.id)) {
-        expect(found).toBe(false);
-      } else {
-        if (!found) {
-          throw new Error(`case ${evalCase.id} expected path is not in candidates`);
+      for (const expected of prepared.expectedPaths) {
+        const found = prepared.candidates.some((candidate) => candidate.path === expected);
+        if (KNOWN_RECALL_MISSES.has(evalCase.id)) {
+          expect(found).toBe(false);
+        } else if (!found) {
+          throw new Error(`case ${evalCase.id} expected path is not in candidates: ${expected}`);
         }
       }
     }
