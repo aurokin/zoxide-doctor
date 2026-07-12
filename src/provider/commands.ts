@@ -345,6 +345,12 @@ export async function providerDiscoverCommand(
       `fast tier: ${fastReady ? "ready" : "needs attention"}; escalation tier: ${escalationReady ? "ready" : "needs attention"}`,
     );
 
+    if (claudeReady && !config.escalation) {
+      lines.push(
+        "tip: run 'zdr config-escalation claude sonnet' to send hard retries to your Claude subscription",
+      );
+    }
+
     console.log(lines.join("\n"));
     return { code: 0 };
   } catch (error) {

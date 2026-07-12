@@ -1,7 +1,7 @@
 import { isAbsolute, normalize, resolve } from "node:path";
-import { buildCandidates, shouldAddLocalScanCandidates, type Candidate } from "./candidates.js";
+import { buildCandidates, injectCorrectionCandidate, shouldAddLocalScanCandidates, type Candidate } from "./candidates.js";
 import { DEFAULT_CONFIG, type LoadedConfig, type ZdrConfig } from "./config.js";
-import type { CorrectionEntry, CorrectionLookup } from "./corrections.js";
+import type { CorrectionEntry, CorrectionInspection, CorrectionLookup } from "./corrections.js";
 import type { PickerInput, PickerResult } from "./picker.js";
 import type { BackendSelectionInput, BackendTierSpec } from "./provider/backends.js";
 import type { ProviderReasoning, SelectionResult } from "./provider/select.js";
@@ -15,7 +15,9 @@ export type NavigationCommandResult = {
 
 export type NavigationDeps = {
   lookupCorrection: (query: string) => Promise<CorrectionLookup>;
+  inspectCorrection: (query: string) => Promise<CorrectionInspection>;
   storeCorrection: (input: { query: string; path: string; now?: Date }) => Promise<CorrectionEntry>;
+  forgetCorrection: (query: string) => Promise<boolean>;
   loadZoxideEntries: () => Promise<ZoxideEntry[]>;
   scanLocalDirectories: (input: {
     query: string;
@@ -56,7 +58,7 @@ export async function buildSelectionCandidates(input: {
     rejectedPaths: input.rejectedPaths,
   });
   if (!shouldAddLocalScanCandidates(baseCandidates) && scope.roots.length === 0) {
-    return baseCandidates;
+    return injectRememberedCorrection(baseCandidates, input);
   }
   const localPaths = await input.deps.scanLocalDirectories({
     query: input.state.query_argv.join(" ").trim(),
@@ -65,15 +67,48 @@ export async function buildSelectionCandidates(input: {
     maxResults: 50,
   });
   if (localPaths.length === 0) {
-    return baseCandidates;
+    return injectRememberedCorrection(baseCandidates, input);
   }
-  return buildCandidates({
-    state: input.state,
-    entries,
-    localPaths,
-    limit: input.limit,
-    rejectedPaths: input.rejectedPaths,
-  });
+  return injectRememberedCorrection(
+    buildCandidates({
+      state: input.state,
+      entries,
+      localPaths,
+      limit: input.limit,
+      rejectedPaths: input.rejectedPaths,
+    }),
+    input,
+  );
+}
+
+async function injectRememberedCorrection(
+  candidates: Candidate[],
+  input: {
+    state: FinishedZState;
+    rejectedPaths: string[];
+    deps: Pick<NavigationDeps, "inspectCorrection">;
+  },
+): Promise<Candidate[]> {
+  const query = input.state.query_argv.join(" ").trim();
+  if (query.length === 0) {
+    return candidates;
+  }
+  // Correction memory must never break navigation; an unreadable cache or a
+  // failing stat on the remembered path just means no injected candidate.
+  try {
+    const lookup = await input.deps.inspectCorrection(query);
+    if (lookup.status !== "hit") {
+      return candidates;
+    }
+    return injectCorrectionCandidate({
+      candidates,
+      state: input.state,
+      path: lookup.entry.path,
+      rejectedPaths: input.rejectedPaths,
+    });
+  } catch {
+    return candidates;
+  }
 }
 
 export type ConfiguredScanScope = {

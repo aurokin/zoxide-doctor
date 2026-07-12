@@ -195,6 +195,131 @@ describe("recovery navigation", () => {
   });
 });
 
+describe("recovery correction memory", () => {
+  test("injects a remembered correction so the model can select an out-of-db path", async () => {
+    const remembered = join(tempDir, "pm64-decomp");
+    await mkdir(remembered);
+    await recordFinishedAttempt("attempt-inject", join(tempDir, "wrong"), ["papermario"]);
+
+    expect(
+      await recoverCommand({
+        ...testDeps(),
+        loadZoxideEntries: async () => [{ path: join(tempDir, "unrelated"), score: 10, rank: 1 }],
+        inspectCorrection: async (query) => ({
+          status: "hit",
+          query,
+          entry: { path: remembered, first_resolved: "2026-05-18T00:00:00.000Z", hits: 5 },
+        }),
+        selectCandidate: async ({ candidates }) => {
+          expect(candidates[0]?.path).toBe(remembered);
+          return selectionResult(candidates[0] ?? null);
+        },
+      }),
+    ).toEqual({ code: 0 });
+
+    expect(stdout).toEqual([remembered]);
+  });
+
+  test("stores a high-confidence recovery selection", async () => {
+    const selected = join(tempDir, "agentscan");
+    await mkdir(selected);
+    const stored: Array<{ query: string; path: string }> = [];
+    await recordFinishedAttempt("attempt-store", join(tempDir, "wrong"), ["ascan"]);
+
+    await recoverCommand({
+      ...testDeps(),
+      loadZoxideEntries: async () => [{ path: selected, score: 10, rank: 1 }],
+      selectCandidate: async ({ candidates }) => selectionResult(candidates[0] ?? null, 0.9),
+      storeCorrection: async ({ query, path }) => {
+        stored.push({ query, path });
+        return { path, first_resolved: "2026-05-18T00:00:00.000Z", hits: 0 };
+      },
+    });
+
+    expect(stored).toEqual([{ query: "ascan", path: selected }]);
+  });
+
+  test("does not store a low-confidence recovery selection", async () => {
+    const selected = join(tempDir, "agentscan");
+    await mkdir(selected);
+    const stored: Array<{ query: string; path: string }> = [];
+    await recordFinishedAttempt("attempt-lowconf", join(tempDir, "wrong"), ["ascan"]);
+
+    await recoverCommand({
+      ...testDeps(),
+      loadZoxideEntries: async () => [{ path: selected, score: 10, rank: 1 }],
+      selectCandidate: async ({ candidates }) => selectionResult(candidates[0] ?? null, 0.5),
+      storeCorrection: async ({ query, path }) => {
+        stored.push({ query, path });
+        return { path, first_resolved: "2026-05-18T00:00:00.000Z", hits: 0 };
+      },
+    });
+
+    expect(stored).toEqual([]);
+  });
+
+  test("stores the picker selection as a correction", async () => {
+    const first = join(tempDir, "first");
+    const second = join(tempDir, "second");
+    const selected = join(tempDir, "pm64-decomp");
+    const stored: Array<{ query: string; path: string }> = [];
+    await mkdir(first);
+    await mkdir(second);
+    await mkdir(selected);
+    await recordFinishedAttempt("attempt-picker-store", join(tempDir, "wrong"), ["papermario"]);
+    for (const path of [first, second]) {
+      await recoverCommand({
+        ...testDeps(),
+        loadZoxideEntries: async () => [{ path, score: 10, rank: 1 }],
+        selectCandidate: async ({ candidates }) => selectionResult(candidates[0] ?? null),
+      });
+    }
+
+    await recoverCommand({
+      ...testDeps(),
+      loadZoxideEntries: async () => [{ path: selected, score: 10, rank: 1 }],
+      runPicker: async () => ({ status: "selected", path: selected }),
+      storeCorrection: async ({ query, path }) => {
+        stored.push({ query, path });
+        return { path, first_resolved: "2026-05-18T00:00:00.000Z", hits: 0 };
+      },
+    });
+
+    expect(stored).toEqual([{ query: "papermario", path: selected }]);
+  });
+
+  test("evicts a remembered correction the user just rejected", async () => {
+    const rejected = join(tempDir, "wrong-target");
+    const second = join(tempDir, "agentscan");
+    const forgotten: string[] = [];
+    await mkdir(rejected);
+    await mkdir(second);
+    await recordFinishedAttempt("attempt-evict", join(tempDir, "wrong"), ["ascan"]);
+    await recoverCommand({
+      ...testDeps(),
+      loadZoxideEntries: async () => [{ path: rejected, score: 10, rank: 1 }],
+      selectCandidate: async ({ candidates }) => selectionResult(candidates[0] ?? null),
+    });
+
+    await recoverCommand({
+      ...testDeps(),
+      loadZoxideEntries: async () => [{ path: second, score: 9, rank: 2 }],
+      inspectCorrection: async (query) => ({
+        status: "hit",
+        query,
+        entry: { path: rejected, first_resolved: "2026-05-18T00:00:00.000Z", hits: 4 },
+      }),
+      forgetCorrection: async (query) => {
+        forgotten.push(query);
+        return true;
+      },
+      selectCandidate: async ({ candidates }) => selectionResult(candidates.find((c) => c.path === second) ?? null),
+    });
+
+    expect(forgotten).toEqual(["ascan"]);
+  });
+});
+
 async function recordFinishedAttempt(attemptId: string, afterPath: string, queryArgv: string[]): Promise<void> {
   await recordZAttempt({
     attemptId,
@@ -212,9 +337,9 @@ async function recordFinishedAttempt(attemptId: string, afterPath: string, query
 function testDeps(overrides: Partial<NavigationDeps> = {}): NavigationDeps {
   return {
     lookupCorrection: async (query) => ({ status: "miss", query }),
-    storeCorrection: async () => {
-      throw new Error("unexpected correction store");
-    },
+    inspectCorrection: async (query) => ({ status: "miss", query }),
+    storeCorrection: async ({ path }) => ({ path, first_resolved: "2026-05-18T00:00:00.000Z", hits: 0 }),
+    forgetCorrection: async () => false,
     loadZoxideEntries: async () => [],
     scanLocalDirectories: async () => [],
     selectCandidate: async () => {
@@ -241,11 +366,11 @@ function testDeps(overrides: Partial<NavigationDeps> = {}): NavigationDeps {
   };
 }
 
-function selectionResult(candidate: Candidate | null) {
+function selectionResult(candidate: Candidate | null, confidence?: number) {
   return {
     selection: {
       candidate_id: candidate?.id ?? null,
-      confidence: candidate ? 0.8 : 0,
+      confidence: candidate ? (confidence ?? 0.8) : 0,
       reason: "selected",
     },
     candidate,

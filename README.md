@@ -166,6 +166,8 @@ First no-arg recovery requests minimal reasoning effort through Pi when the conf
 
 If the second repair is wrong too, run `zdr` a third time. The third recovery opens an `fzf` picker seeded with the original query, zoxide-ranked candidates, and optional `fd` scan results from the configured context roots.
 
+Recovery reuses the correction cache as alias memory. Once you resolve a query — by picking in the `fzf` picker or accepting a high-confidence repair — the target is remembered and injected as the top candidate on later recoveries of the same query, even when it has no lexical overlap and is absent from zoxide. A remembered target you reject during recovery is forgotten so it stops resurfacing.
+
 Experimental direct lookup:
 
 ```bash

@@ -53,8 +53,34 @@ export function buildCandidates(input: {
     })
     .map((candidate, index) => ({
       ...candidate,
-      id: `c${String(index + 1).padStart(3, "0")}`,
+      id: candidateId(index),
     }));
+}
+
+export function injectCorrectionCandidate(input: {
+  candidates: Candidate[];
+  state: FinishedZState;
+  path: string;
+  rejectedPaths?: string[];
+}): Candidate[] {
+  const rejected = new Set(input.rejectedPaths ?? []);
+  if (rejected.has(input.path) || input.candidates.some((candidate) => candidate.path === input.path)) {
+    return input.candidates;
+  }
+  const query = input.state.query_argv.join(" ").trim();
+  const scored = scoreEntry(query, { path: input.path, score: 0, rank: 0 }, input.state.after_pwd);
+  const injected: Candidate = {
+    ...scored,
+    reasons: ["remembered correction", ...scored.reasons],
+  };
+  return [injected, ...input.candidates].map((candidate, index) => ({
+    ...candidate,
+    id: candidateId(index),
+  }));
+}
+
+function candidateId(index: number): string {
+  return `c${String(index + 1).padStart(3, "0")}`;
 }
 
 export function shouldAddLocalScanCandidates(candidates: Candidate[]): boolean {

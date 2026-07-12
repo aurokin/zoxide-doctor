@@ -29,6 +29,7 @@ export async function recoverCommand(deps: NavigationDeps): Promise<NavigationCo
     }
     retry = await readRecoveryRetryForAttempt(state);
     mode = chooseRecoveryMode(retry);
+    await evictRejectedCorrection(state, retry, deps);
     if (mode === "picker") {
       if (!retry) {
         throw new Error("no recovery retry state found");
@@ -55,6 +56,7 @@ export async function recoverCommand(deps: NavigationDeps): Promise<NavigationCo
       rejectedPath: result.candidate.path,
       existing: retry,
     });
+    await maybeStoreRecoveryCorrection({ state, result, deps });
     await recordRecoveryTelemetry(deps, {
       state,
       retry,
@@ -128,6 +130,7 @@ async function pickerRecoveryCommand(
   });
   switch (result.status) {
     case "selected":
+      await storeRecoveryCorrection(state, result.path, deps);
       await recordRecoveryTelemetry(deps, {
         state,
         retry,
@@ -204,6 +207,54 @@ async function recordRecoveryTelemetry(
     });
   } catch {
     // Telemetry must never break navigation.
+  }
+}
+
+const RECOVERY_CACHE_CONFIDENCE = 0.75;
+
+async function evictRejectedCorrection(
+  state: FinishedZState,
+  retry: Awaited<ReturnType<typeof readRecoveryRetryForAttempt>>,
+  deps: NavigationDeps,
+): Promise<void> {
+  const rejected = retry?.rejected_paths ?? [];
+  if (rejected.length === 0) {
+    return;
+  }
+  const query = state.query_argv.join(" ").trim();
+  if (query.length === 0) {
+    return;
+  }
+  try {
+    const lookup = await deps.inspectCorrection(query);
+    if (lookup.status === "hit" && rejected.includes(lookup.entry.path)) {
+      await deps.forgetCorrection(query);
+    }
+  } catch {
+    // Correction memory must never break navigation.
+  }
+}
+
+async function maybeStoreRecoveryCorrection(input: {
+  state: FinishedZState;
+  result: SelectionResult;
+  deps: NavigationDeps;
+}): Promise<void> {
+  if (!input.result.candidate || input.result.selection.confidence < RECOVERY_CACHE_CONFIDENCE) {
+    return;
+  }
+  await storeRecoveryCorrection(input.state, input.result.candidate.path, input.deps);
+}
+
+async function storeRecoveryCorrection(state: FinishedZState, path: string, deps: NavigationDeps): Promise<void> {
+  const query = state.query_argv.join(" ").trim();
+  if (query.length === 0) {
+    return;
+  }
+  try {
+    await deps.storeCorrection({ query, path, now: deps.now() });
+  } catch (error) {
+    console.error(`zdr: warning: failed to store correction: ${error instanceof Error ? error.message : String(error)}`);
   }
 }
 

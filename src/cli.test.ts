@@ -7,6 +7,7 @@ import type { Candidate } from "./candidates.js";
 import { DEFAULT_CONFIG, type LoadedConfig } from "./config.js";
 import type { CorrectionLookup } from "./corrections.js";
 import {
+  forgetCorrection,
   inspectCorrection,
   readCorrectionCache,
   storeCorrection,
@@ -1341,6 +1342,66 @@ describe("main provider-discover command", () => {
     expect(stderr).toEqual([]);
   });
 
+  test("suggests configuring claude escalation when claude is ready and escalation is unset", async () => {
+    expect(
+      await main(
+        ["provider-discover"],
+        testDeps({
+          loadConfig: async () => defaultLoadedConfig(),
+          claudeProbe: async () => ({ present: true, loggedIn: true, email: "user@example.com" }),
+          providerAuthStatuses: async () => [{ provider: "openai-codex", authenticated: false }],
+          piSharedProviders: async () => [],
+          codexFilePresent: async () => false,
+        }),
+      ),
+    ).toEqual({ code: 0 });
+
+    const output = stdout.join("\n");
+    expect(output).toContain(
+      "tip: run 'zdr config-escalation claude sonnet' to send hard retries to your Claude subscription",
+    );
+    expect(stderr).toEqual([]);
+  });
+
+  test("does not suggest claude escalation when escalation is already configured", async () => {
+    expect(
+      await main(
+        ["provider-discover"],
+        testDeps({
+          loadConfig: async () =>
+            defaultLoadedConfig({ escalation: { backend: "claude", model: "sonnet" } }),
+          claudeProbe: async () => ({ present: true, loggedIn: true, email: "user@example.com" }),
+          providerAuthStatuses: async () => [{ provider: "openai-codex", authenticated: false }],
+          piSharedProviders: async () => [],
+          codexFilePresent: async () => false,
+        }),
+      ),
+    ).toEqual({ code: 0 });
+
+    const output = stdout.join("\n");
+    expect(output).not.toContain("tip: run 'zdr config-escalation claude sonnet'");
+    expect(stderr).toEqual([]);
+  });
+
+  test("does not suggest claude escalation when claude is not ready", async () => {
+    expect(
+      await main(
+        ["provider-discover"],
+        testDeps({
+          loadConfig: async () => defaultLoadedConfig(),
+          claudeProbe: async () => ({ present: true, loggedIn: false }),
+          providerAuthStatuses: async () => [{ provider: "openai-codex", authenticated: false }],
+          piSharedProviders: async () => [],
+          codexFilePresent: async () => false,
+        }),
+      ),
+    ).toEqual({ code: 0 });
+
+    const output = stdout.join("\n");
+    expect(output).not.toContain("tip: run 'zdr config-escalation claude sonnet'");
+    expect(stderr).toEqual([]);
+  });
+
   test("rejects unknown provider-discover options", async () => {
     expect(await main(["provider-discover", "--json"], testDeps())).toEqual({ code: 2 });
 
@@ -2469,6 +2530,7 @@ function testDeps(
     lookupCorrection: input.lookup ? async () => input.lookup as CorrectionLookup : readCorrectionFromCache,
     inspectCorrection,
     storeCorrection: input.storeCorrection ?? storeCorrection,
+    forgetCorrection,
     loadZoxideEntries: async () => {
       throw new Error("unexpected zoxide load");
     },

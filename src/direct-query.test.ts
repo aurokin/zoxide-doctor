@@ -135,9 +135,11 @@ function testDeps(overrides: Partial<Omit<NavigationDeps, "cwd" | "now">> & { cw
   const { cwd = "/repo", now = new Date("2026-05-18T00:00:00.000Z"), ...depsOverrides } = overrides;
   return {
     lookupCorrection: async (query) => ({ status: "miss", query }),
+    inspectCorrection: async (query) => ({ status: "miss", query }),
     storeCorrection: async () => {
       throw new Error("unexpected correction store");
     },
+    forgetCorrection: async () => false,
     loadZoxideEntries: async () => [],
     scanLocalDirectories: async () => [],
     selectCandidate: async () => {

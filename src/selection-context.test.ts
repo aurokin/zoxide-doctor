@@ -87,14 +87,99 @@ describe("selection context", () => {
     expect(scannedCandidate?.zoxide_score).toBe(0);
     expect(scannedCandidate?.path).toBe(scanned);
   });
+
+  test("injects a remembered correction as the top candidate even when absent from the db and scan", async () => {
+    const remembered = "/home/me/dev/pm64-decomp";
+    const state = finishedState({ query_argv: ["papermario"], after_pwd: "/tmp/wrong" });
+
+    const candidates = await buildSelectionCandidates({
+      state,
+      entries: [{ path: "/repo/unrelated", score: 10, rank: 1 }],
+      limit: 50,
+      rejectedPaths: [],
+      deps: {
+        ...depsWithCwd("/repo"),
+        inspectCorrection: async (query) => ({
+          status: "hit",
+          query,
+          entry: { path: remembered, first_resolved: "2026-05-18T00:00:00.000Z", hits: 3 },
+        }),
+      },
+    });
+
+    expect(candidates[0]?.path).toBe(remembered);
+    expect(candidates[0]?.id).toBe("c001");
+    expect(candidates[0]?.reasons).toContain("remembered correction");
+  });
+
+  test("excludes an injected correction that was already rejected this session", async () => {
+    const remembered = "/home/me/dev/pm64-decomp";
+    const state = finishedState({ query_argv: ["papermario"], after_pwd: "/tmp/wrong" });
+
+    const candidates = await buildSelectionCandidates({
+      state,
+      entries: [{ path: "/repo/unrelated", score: 10, rank: 1 }],
+      limit: 50,
+      rejectedPaths: [remembered],
+      deps: {
+        ...depsWithCwd("/repo"),
+        inspectCorrection: async (query) => ({
+          status: "hit",
+          query,
+          entry: { path: remembered, first_resolved: "2026-05-18T00:00:00.000Z", hits: 3 },
+        }),
+      },
+    });
+
+    expect(candidates.map((candidate) => candidate.path)).not.toContain(remembered);
+  });
+
+  test("falls through cleanly when the remembered correction is stale", async () => {
+    const remembered = "/home/me/dev/pm64-decomp";
+    const state = finishedState({ query_argv: ["papermario"], after_pwd: "/tmp/wrong" });
+
+    const candidates = await buildSelectionCandidates({
+      state,
+      entries: [{ path: "/repo/unrelated", score: 10, rank: 1 }],
+      limit: 50,
+      rejectedPaths: [],
+      deps: {
+        ...depsWithCwd("/repo"),
+        inspectCorrection: async (query) => ({ status: "stale", query, stalePath: remembered }),
+      },
+    });
+
+    expect(candidates.map((candidate) => candidate.path)).not.toContain(remembered);
+  });
+
+  test("keeps navigating when the correction cache read fails", async () => {
+    const state = finishedState({ query_argv: ["papermario"], after_pwd: "/tmp/wrong" });
+
+    const candidates = await buildSelectionCandidates({
+      state,
+      entries: [{ path: "/repo/unrelated", score: 10, rank: 1 }],
+      limit: 50,
+      rejectedPaths: [],
+      deps: {
+        ...depsWithCwd("/repo"),
+        inspectCorrection: async () => {
+          throw new Error("corrections.json is unreadable");
+        },
+      },
+    });
+
+    expect(candidates.map((candidate) => candidate.path)).toContain("/repo/unrelated");
+  });
 });
 
 function depsWithCwd(cwd: string): NavigationDeps {
   return {
     lookupCorrection: async () => ({ status: "miss", query: "" }),
+    inspectCorrection: async (query) => ({ status: "miss", query }),
     storeCorrection: async () => {
       throw new Error("unexpected correction store");
     },
+    forgetCorrection: async () => false,
     loadZoxideEntries: async () => [],
     scanLocalDirectories: async () => [],
     selectCandidate: async () => {

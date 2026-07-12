@@ -338,6 +338,8 @@ remember ascan -> ~/dev/agentscan? [y/N]
 
 This should be opt-in and out of scope for v0.1. The initial implementation only records high-confidence direct-query `zdr <query>` resolutions.
 
+**Status:** A non-interactive form of recovery alias memory is now implemented. Recovery stores high-confidence (>= 0.75) and picker resolutions into the same `corrections.json` cache, injects a remembered target as the top candidate on later recoveries of the same query (surviving absence from zoxide), and evicts a remembered target the user rejects. The interactive `remember … ? [y/N]` prompt above remains future work.
+
 ## 11. Configuration
 
 File: `$XDG_CONFIG_HOME/zdr/config.toml`

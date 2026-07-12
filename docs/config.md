@@ -171,6 +171,8 @@ Recovery has three attempts: a fast first attempt (minimal reasoning), a "thinki
 
 When `escalation` is absent, the second attempt keeps today's behavior: the same provider as the fast tier with high reasoning.
 
+Recovery also draws on the correction cache as alias memory. A query resolved once — through the third-attempt picker or a high-confidence repair (confidence >= 0.75) — is remembered and injected as the top model candidate on later recoveries of the same query, so an alias with no lexical overlap (for example `papermario` -> `pm64-decomp`) becomes reachable even when it is not in zoxide. Rejecting a remembered target during recovery evicts it from the cache. This shares the direct-query `corrections.json` cache and does not affect zoxide frecency.
+
 Set it with a command:
 
 ```bash

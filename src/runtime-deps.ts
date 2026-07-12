@@ -10,6 +10,7 @@ import {
   type ZdrConfig,
 } from "./config.js";
 import {
+  forgetCorrection,
   inspectCorrection,
   lookupCorrection,
   storeCorrection,
@@ -47,6 +48,7 @@ export type CliDeps = {
   lookupCorrection: (query: string) => Promise<CorrectionLookup>;
   inspectCorrection: (query: string) => Promise<CorrectionInspection>;
   storeCorrection: (input: { query: string; path: string; now?: Date }) => Promise<CorrectionEntry>;
+  forgetCorrection: (query: string) => Promise<boolean>;
   loadZoxideEntries: () => Promise<ZoxideEntry[]>;
   scanLocalDirectories: (input: {
     query: string;
@@ -79,6 +81,7 @@ export const defaultDeps: CliDeps = {
   lookupCorrection,
   inspectCorrection,
   storeCorrection,
+  forgetCorrection,
   loadZoxideEntries,
   scanLocalDirectories,
   selectCandidate: async (input) => {
