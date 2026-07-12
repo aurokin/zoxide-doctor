@@ -26,6 +26,28 @@ zdr config-escalation claude sonnet
 
 Method: 50-case adversarial corpus (`src/eval/`), categories abbreviation/initialism/typo/ambiguous-siblings/monorepo-package/wrong-landing/stale-decoy/escalation/no-answer/multi-word, run via `ZDR_EVAL_LIVE=1 bun scripts/run-evals.ts --live --backend <spec>`. Known shared weaknesses: abbreviation ceiling ~60% on all fast-tier models (sonnet 80%); all models miss esc-api/esc-auth/none-payroll (labels under review). Recommended escalation config: `zdr config-escalation claude sonnet`.
 
+### Prompt caching (investigated 2026-07-12)
+
+Every eval run reports `usage.cacheRead=0` on the `openai-codex` backend. This is **not** a reporting gap and **not** a win we are leaving on the table at our prompt sizes.
+
+Findings (empirical, live Codex OAuth probes, `pi:openai-codex:gpt-5.6-terra`, minimal reasoning):
+
+| Prompt | Candidates | input tokens | sessionId set? | Repeat-call cacheRead |
+|---|---|---:|---|---:|
+| small | 8 | 356 | no | 0 |
+| realistic default | 50 | 812 | **yes** | **0** |
+| padded (synthetic) | 140 | 1821 | no | 0 |
+| padded (synthetic) | 140 | 1821 | **yes** | **1280** (input dropped 1821→541) |
+
+Two independent facts explain the zeros:
+
+1. **pi-ai never sets `prompt_cache_key`.** The Codex transport sends `prompt_cache_key: clampOpenAIPromptCacheKey(options.sessionId)` (`dist/api/openai-codex-responses.js`), and `select.ts` does not pass `sessionId`, so the key is omitted and the backend does not attach responses to a cache. cacheRead is otherwise fully plumbed — `openai-responses-shared.js` reads `response.usage.input_tokens_details.cached_tokens` into `usage.cacheRead`. So a nonzero value *would* surface if the backend returned one.
+2. **Our prompts are below the OpenAI ~1024-token prefix-caching threshold.** The realistic default (50 candidates) is ~620–812 tokens. Even with a stable `sessionId`, the 50-candidate repeat still reported `cacheRead=0`. Caching only activated in the synthetic 140-candidate / 1821-token case.
+
+Latency: in the one case where caching did activate (1821 tokens), the cached repeat was not faster (1193ms → 1361ms, within noise). Cost is moot — Codex OAuth reports `$0`.
+
+**Decision: no product-code change.** Setting `sessionId` in `select.ts` would not help, because realistic selection prompts (~600–800 tokens) sit below the backend's caching threshold; caching only engages at prompt sizes we never send. If the candidate cap or prompt grows past ~1024 tokens in the future, revisit by threading a stable `sessionId` (e.g. a per-machine constant) through `selectionCompletionOptions` → `completeSimple`.
+
 ## 2026-05-23 (superseded)
 
 > Superseded by the 2026-07-12 section above. The `cerebras llama3.1-8b` model recommended here no longer exists in the Pi catalog. Kept for historical reference.
