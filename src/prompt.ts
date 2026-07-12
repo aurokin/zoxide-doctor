@@ -28,8 +28,10 @@ export function buildSelectionPrompt(input: {
       "You are zdr, a directory disambiguation helper for the zoxide CLI tool.",
       "Given a user's short query, recorded zoxide jump context, and candidate directories, return the single best candidate ID the user most likely intended to navigate to.",
       "Recognize abbreviations, initialisms, and partial matches that simple substring search would miss.",
+      "A candidate that merely contains the query as a literal substring is not automatically the best: a name the query abbreviates can beat one that just contains it, and the live working copy of a project beats an archived or backup duplicate of that same project.",
       "Do not choose a candidate marked wrong_landing_candidate unless every other candidate is clearly worse.",
       'Output strict JSON only: {"candidate_id":"c001","confidence":0.0,"reason":"short reason"}',
+      "Return null when no candidate matches what the query means. A directory that is only topically related (same domain, different thing) is not a match; prefer null over a loosely-related guess.",
       'If no candidate is good, output: {"candidate_id":null,"confidence":0.0,"reason":"why"}',
     ].join("\n"),
     userMessage: [
