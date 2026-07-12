@@ -135,3 +135,7 @@ No remaining hardening tasks are planned for the current roadmap.
 
 1. Homebrew tap.
 2. Publish the first tagged release after CI and release automation settle.
+
+## Upstream To-Dos
+
+1. File the pi-ai Codex client-identity bug (gpt-5.6-luna routed to a non-provisioned checkpoint under pi-ai's hardcoded originator/User-Agent). Ready-to-file draft: `docs/upstream/pi-ai-codex-identity-draft.md`. Remove the `src/provider/codex-identity.ts` workaround once fixed upstream.
