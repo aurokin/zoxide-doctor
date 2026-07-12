@@ -79,8 +79,8 @@ Makes real provider calls, so it refuses to run unless `ZDR_EVAL_LIVE=1` is set.
 
 ```
 ZDR_EVAL_LIVE=1 bun scripts/run-evals.ts --live \
-  --backend pi:openai-codex:gpt-5.3-codex-spark \
-  --backend claude:haiku \
+  --backend pi:openai-codex:gpt-5.6-terra \
+  --backend claude:sonnet \
   --repeat 3 --reasoning high --jsonl live.jsonl
 ```
 
@@ -138,8 +138,8 @@ for the curator to decide.
 
 ## Backend spec format
 
-- `pi:<provider>:<model>` — e.g. `pi:openai-codex:gpt-5.3-codex-spark`
-- `claude:<model>` — e.g. `claude:haiku`
+- `pi:<provider>:<model>` — e.g. `pi:openai-codex:gpt-5.6-terra`
+- `claude:<model>` — e.g. `claude:sonnet`
 
 Specs are parsed into the `BackendTierSpec` shape consumed by
 `src/provider/backends.ts` (`selectWithBackend`), which the live runner imports
@@ -275,8 +275,7 @@ Full suite on `pi:openai-codex:gpt-5.6-terra`, `--repeat 3 --concurrency 3`
 
 - **Accuracy: 96.0% (144/150), 0 errors.** With the `esc-api`/`esc-auth`
   accepted-set relabel, terra's unanimous `apiv2`/`authz` picks now score
-  correct; without it the same run would read 92% (138/150). The 94% figure
-  from earlier single-expected runs sat between the two.
+  correct; single-expected scoring would read 92% (138/150).
 - **Stability: 100% (50/50 cases identical across all 3 repeats), 0 flips.**
   terra is fully deterministic on this corpus at this temperature — the 96%
   headline is not an average over noisy cases, it is 48 cases right every time

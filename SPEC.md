@@ -44,9 +44,8 @@ The LLM's job is recognizing abbreviations, initialisms, and intent that pure su
 - Escalate naturally when the user repeats `zdr` after a bad correction.
 - Feel native alongside zoxide. Minimal shell friction and fast cold start for a tool that gates navigation.
 - Offer direct-query mode (`zdr <query>`) as an experimental shortcut for novel aliases.
-- Keep enough structure in the prompt to support provider-side prompt caching later.
 - Use a provider framework so zdr does not grow custom provider plumbing.
-- Use OpenRouter as the default provider target for v0.1.
+- Default to subscription auth (ChatGPT-plan OAuth); support env-key providers as the alternative.
 
 **Non-goals**
 - Replacing zoxide as the normal jump command. The default path remains `z <query>` first, `zdr` only when that goes wrong.
@@ -56,19 +55,16 @@ The LLM's job is recognizing abbreviations, initialisms, and intent that pure su
 
 ## 3. Architecture
 
-- **Language/runtime**: TypeScript on Bun. Bun is the runtime and distribution target because cold start matters in shell flow and `bun build --compile` can ship a standalone executable. Local-only paths should avoid unnecessary provider imports where possible.
-- **Model layer**: Use Pi's provider/model SDK (`@earendil-works/pi-ai`) for LLM calls, model metadata, reasoning controls, usage/cost accounting, and provider-specific request details. Use the provider layer only; zdr is not an autonomous Pi coding agent.
+- **Language/runtime**: TypeScript on Bun. Bun is the runtime and distribution target because cold start matters in shell flow and `bun build --compile` ships a standalone executable.
+- **Model layer**: Pi's provider/model SDK (`@earendil-works/pi-ai` ^0.80, via the `/compat` entrypoint) for fast-tier LLM calls, model metadata, reasoning controls, and usage/cost accounting. The original spec excluded agent SDKs entirely; that boundary was deliberately relaxed for the escalation tier only, which may run through `@anthropic-ai/claude-agent-sdk` (§8.2). The fast path remains completion-only.
 - **Shell integration**: Mirrors zoxide's install pattern. A small init script defines the `zdr` shell function and records `z` attempts at execution time so recovery mode never has to reconstruct intent from shell history.
 
 ### 3.1 Cold-start requirement
 
 Cold start is part of the product, not an implementation detail.
 
-- Ship as a Bun-compiled executable if Pi compatibility holds.
-- Measure `zdr --version`, `zdr record-z`, cache-hit `zdr <query>`, and no-arg `zdr` context-gathering before any network call.
-- Keep shell-state commands lightweight and free of provider imports.
-- Treat provider/framework import time as acceptable only on paths that are about to make a network call.
-- If Pi or Bun compatibility creates unacceptable startup cost, optimize the module boundary before changing product behavior.
+- Local paths (`zdr --version`, `zdr record-z`, cache-hit `zdr <query>`, no-arg context gathering before any network call) run under a 150ms budget, checked by `bun scripts/timing-baseline.ts` (it reports budget failures in its JSON output; it does not fail the build).
+- Provider SDK imports stay dynamic. Local-only paths never load them; import cost is acceptable only on paths about to make a network call.
 
 ## 4. Command Surface
 
@@ -78,13 +74,13 @@ The public commands are deliberately separated:
 - `zdr` with no args means "repair the last `z` jump."
 - `zdr <query>` means "try a direct LLM/correction-memory jump" and is experimental.
 
-The no-arg path is the product's center of gravity. Argument-bearing `zdr <query>` is allowed for convenience, but docs and examples should teach `z <query>` first and `zdr` as the recovery command.
+The no-arg path is the product's center of gravity. Argument-bearing `zdr <query>` is allowed for convenience, but docs and examples should teach `z <query>` first and `zdr` as the recovery command. `zdr --help` lists the full surface, including debug, benchmark, and provider commands.
 
 ### 4.1 Recovery mode — `zdr` (no args)
 
 Triggered when the user has just jumped somewhere wrong via `z`. zdr reads the previous `z` attempt from its own shell-recorded state, not from `$HISTFILE`.
 
-Recovery mode is the primary workflow and must be deterministic. `zdr init <shell>` installs a small zoxide-aware shell integration that records:
+Recovery mode is the primary workflow and must be deterministic. `zdr init <shell>` installs a zoxide-aware shell integration that records:
 
 - the raw `z` argv/query
 - `PWD` before the `z` call
@@ -92,7 +88,7 @@ Recovery mode is the primary workflow and must be deterministic. `zdr init <shel
 - the zoxide exit status
 - timestamp and shell name
 
-The state file lives at `$XDG_STATE_HOME/zdr/last_z.json` (default `~/.local/state/zdr/last_z.json`). `zdr` with no args uses that file as the source of truth. The wrapper should preserve the real zoxide exit code and should not change normal `z` behavior.
+The state file lives at `$XDG_STATE_HOME/zdr/last_z.json` (default `~/.local/state/zdr/last_z.json`). `zdr` with no args uses that file as the source of truth. The wrapper preserves the real zoxide exit code and does not change normal `z` behavior.
 
 ### 4.2 Direct-query mode — `zdr <query>` experimental
 
@@ -108,11 +104,11 @@ Cost-aware: direct-query mode could hit the LLM on every attempted jump, so it i
 
 A behavioral signal — *"was the previous shell command also zdr?"* — drives escalation. Not a time-based TTL.
 
-| Call # | User action | Reasoning | Behavior |
-|--------|-------------|-----------|----------|
-| 1st    | `zdr` after bad `z` jump | off | Snappy. LLM picks from zoxide DB + recorded jump context. |
-| 2nd    | `zdr` again after bad zdr correction | `high` | Retry state present → previous suggestion was rejected. Inject rejected paths into prompt as `Already tried (wrong): [...]`. Print `thinking harder...` to stderr so the user knows zdr heard them. |
-| 3rd    | `zdr` again after another bad correction | n/a | Bail to `fd -t d --hidden . ~ \| fzf --query="<original>"`, merged with `zoxide query -l` for frecency ranking. Whatever the user picks is returned as the target. |
+| Call # | User action | Behavior |
+|--------|-------------|----------|
+| 1st    | `zdr` after bad `z` jump | Fast tier. Configured provider at minimal reasoning (maps to Codex `low` effort). Snappy: LLM picks from zoxide DB + recorded jump context. |
+| 2nd    | `zdr` again after bad zdr correction | Escalation tier. Rejected paths injected into the prompt as `Already tried (wrong): [...]`. Uses the optional `escalation` config block if set (§8.2, recommended: `zdr config-escalation claude sonnet`); otherwise the same provider with `high` reasoning. Prints `thinking harder...` to stderr so the user knows zdr heard them. |
+| 3rd    | `zdr` again after another bad correction | Bail to `fd -t d --hidden . ~ \| fzf --query="<original>"`, merged with `zoxide query -l` for frecency ranking. Whatever the user picks is returned as the target. |
 
 ### 5.1 Recovery retry state
 
@@ -125,21 +121,19 @@ The prompt is small on purpose. Recovery mode does not send broad shell history 
 - **Zoxide candidates**: `zoxide query --list --score`, converted into a bounded ranked candidate list.
 - **Original query**: the recorded `z` argv/query, or the explicit `<query>` arg.
 - **Before/after pwd**: where the user was before zoxide and where zoxide landed.
-- **Local directory candidates**: optional bounded directory scan when zoxide candidates are weak.
-- **Git state** (if cheap): repo root and current branch for before/after pwd.
+- **Local directory candidates**: bounded `fd` scan when zoxide candidates are weak.
+- **Remembered correction** (recovery): a cached alias target for the same query is injected as the top candidate (§10.2).
 - **Rejected paths** (2nd+ call only): from recovery retry state.
 
 ### 6.1 Candidate selection
 
-The LLM should choose from a candidate set, not browse an unbounded filesystem dump.
+The LLM chooses from a candidate set, not an unbounded filesystem dump.
 
-1. Load the zoxide DB. If small, include all paths; otherwise keep the top `zoxide_db_top_n`.
+1. Load the zoxide DB. If small, include all paths; otherwise keep the top 50.
 2. Compute cheap local lexical scores against every zoxide path using basename, path components, subsequence match, acronym/initialism match, and edit distance. Include the top lexical matches even if they are low in frecency.
 3. Include the path zoxide actually chose and mark it as `wrong_landing_candidate` in recovery mode.
-4. If the best zoxide candidates are weak, add a bounded local directory scan under configured roots such as `~/code`, `~/dev`, the previous pwd's parent, and the current repo root. Depth and count are capped.
-5. Send candidates as stable IDs, redacted display paths, and lightweight metadata. Do not send a full tree unless a later fallback explicitly asks for it.
-
-This keeps recovery useful for non-substring abbreviations while preserving a stable-ish prefix for prompt caching.
+4. If the best zoxide candidates are weak, add a bounded local directory scan. Scan scope comes from config: `context.default_dir` (default `~`), plus `context.include_dirs`, minus `context.exclude_dirs`. Depth and count are capped.
+5. Send candidates as stable IDs, redacted display paths, and lightweight metadata.
 
 ### 6.2 Privacy normalization
 
@@ -150,6 +144,8 @@ Before sending context to the model:
 - Do not send recent shell history by default.
 - Redact environment-variable-looking secrets, email addresses, and long token-like strings if they appear in paths or command text.
 - Keep original absolute paths locally and map the selected candidate ID back before printing stdout.
+
+Each redaction class is individually toggleable via the `privacy` config block (§11).
 
 ## 7. Prompt Contract
 
@@ -173,10 +169,10 @@ If no good candidate exists in the database, return:
 
 ### 7.2 User message structure
 
-The order is intentional. The **stable prefix** (system prompt + candidate list) sits first so it can be cached across calls; the **volatile tail** (query, pwd, z attempt, rejected paths) sits last.
+The order is intentional: stable prefix (candidate list) first, volatile tail (query, pwd, z attempt, rejected paths) last.
 
 ```
-=== Stable prefix (cacheable across calls) ===
+=== Stable prefix ===
 
 Candidates (ranked, top 50):
   c001. ~/dev/agentscan
@@ -195,7 +191,7 @@ Z attempt:
 Already tried (wrong): []      # populated on 2nd+ call
 ```
 
-**Critical**: the candidate block uses stable IDs and ordinal rank (`c001.`, `c002.`, ...), not raw frecency scores. Including raw scores (e.g. `152.3`) would invalidate the cached prefix on every `z` invocation, since scores update on every visit. Rank order changes only when paths are added, removed, or significantly reordered — far less often.
+The candidate block uses stable IDs and ordinal rank (`c001.`, `c002.`, ...), not raw frecency scores — scores update on every visit and would churn the prefix.
 
 ### 7.3 Output handling
 
@@ -210,96 +206,58 @@ zdr() {
 
 ### 7.4 Prompt caching
 
-Users hit zoxide back-to-back. The escalation path is a guaranteed back-to-back. Caching is therefore a design requirement, not an optimization.
-
-Provider-side prompt caching is not required for v0.1, but the prompt should be structured so it can benefit from caching later. The likely shape is input-heavy: a stable candidate prefix plus a small volatile tail.
-
-Two design choices serve cache hit rate:
-
-1. **Prefix stability** — message body is ordered stable-first, volatile-last (see §7.2). System prompt and candidate list land before any context that changes per-call.
-2. **Rank, not raw scores** — the candidate block uses ordinal positions so the prefix doesn't churn every time a frecency score updates.
-
-The 2nd-call escalation should preserve the same stable prefix where practical. Only the volatile tail should change: rejected paths, escalation count, and reasoning settings.
+Investigated and closed. pi-ai sends no `prompt_cache_key`, and selection prompts sit below the ~1024-token backend caching threshold, so provider-side caching never engages. No product change. The stable-prefix, rank-not-scores structure above stays — it costs nothing and becomes useful if the candidate cap ever grows past the threshold. Revisit then.
 
 ## 8. Provider Layer
 
-zdr uses Pi's provider/model SDK (`@earendil-works/pi-ai`) instead of hand-rolled provider HTTP. The value of the framework is provider management: model registry, provider-specific payloads, reasoning option mapping, usage/cost accounting, cache metrics where available, env-key lookup, and future provider swaps.
+zdr uses Pi's provider/model SDK instead of hand-rolled provider HTTP: model registry, provider-specific payloads, reasoning option mapping, usage/cost accounting, and env-key lookup. The fast path uses only the thin completion/model APIs — no agent loop, tool execution, or session machinery. The escalation tier may additionally use the Claude Agent SDK (§8.2).
 
-Use only the thin completion/model APIs. Do not use Pi's agent loop, coding-agent harness, TUI, tool execution, or session machinery for v0.1.
-
-v0.1 defaults to OpenRouter.
-
-| Provider | Base URL | Default model | Notes |
+| Tier | Backend | Default / recommended | Auth |
 |---|---|---|---|
-| **OpenRouter via Pi** | `https://openrouter.ai/api/v1` | `google/gemini-2.5-flash-lite` | Initial default. Selected through Pi's model registry/provider layer. |
-| **OpenAI Codex via Pi OAuth** | `https://chatgpt.com/backend-api` | `gpt-5.3-codex-spark` when configured | Optional ChatGPT Pro/Plus path through Pi's `openai-codex-responses` provider. |
+| Fast (1st call) | `openai-codex` via pi-ai | `gpt-5.6-terra` | ChatGPT-plan OAuth: `zdr provider-login openai-codex` |
+| Fast (alternative) | any pi-ai env-key provider, e.g. `openrouter` | user's choice | env key, e.g. `OPENROUTER_API_KEY` |
+| Escalation (2nd call, optional) | `claude` via Claude Agent SDK | `sonnet` | local `claude` CLI login (Pro/Max subscription) |
+
+Eval basis (src/eval/, 50 cases across 10 categories): terra scores 96% accuracy with 100% stability across 3x50 repeats at p50 ~1.4s. Claude Sonnet is the strongest on abbreviations, which is the escalation rationale.
 
 Implementation shape:
 
-- Resolve the configured provider/model through Pi, e.g. `getModel("openrouter", model)`.
-- Call a single completion API, e.g. `completeSimple(...)`, with no tools.
-- Resolve OAuth credentials from ZDR's local auth store before falling back to provider env-key behavior.
+- Resolve the configured provider/model through pi-ai's compat entrypoint; call `completeSimple(...)` with no tools.
+- Resolve OAuth credentials from zdr's local auth store before falling back to provider env-key behavior.
 - Request strict JSON in the prompt and parse/validate locally.
-- Pass reasoning level only when escalating and only through Pi's supported option shape.
-- Omit provider-unsupported options such as `temperature` for OpenAI Codex.
-- Capture Pi usage/cost/cache fields when present for local telemetry.
-- Keep a direct OpenAI-compatible HTTP fallback as an escape hatch only if Pi packaging/startup proves too heavy.
+- Reasoning models get 2048 max-token headroom (hidden reasoning spends output tokens); provider errors, including truncation, are surfaced.
+- Omit `temperature` for OpenAI Codex; force SSE transport there so the Codex client-identity shim (`src/provider/codex-identity.ts`) applies. `gpt-5.6-luna` works only through that shim; the upstream patch is drafted in `docs/upstream/` and tracked in ROADMAP.md.
+- Capture usage/cost fields for local telemetry.
 
-### 8.1 OAuth providers
+### 8.1 OAuth and shared Pi auth
 
-ZDR owns its OAuth credential store at `~/.config/zdr/auth.json`, written with `0600` permissions. `zdr provider-login <provider>` uses Pi's OAuth helpers and `zdr provider-auth-status` reports status without token material.
+zdr owns its OAuth credential store at `~/.config/zdr/auth.json`, written with `0600` permissions. On first use it imports OAuth logins read-only from the Pi CLI store (`~/.pi/agent/auth.json`, override with `PI_CODING_AGENT_DIR`) into its own store, and re-imports if a stored credential stops working. It never writes the Pi file.
 
-`zdr config-provider <provider> <model>` updates only `provider.name` and `provider.model` in `~/.config/zdr/config.json` after validating that Pi knows the provider/model pair.
+- `zdr provider-login <provider>` / `zdr provider-logout <provider>` — OAuth login/removal.
+- `zdr provider-auth-status [provider]` — auth status without token material.
+- `zdr provider-list [provider]` — pi-ai providers, OAuth support, and models.
+- `zdr provider-discover` — token-free readiness report per backend, tier summary, and an escalation tip when Claude is ready but unconfigured.
+- `zdr config-provider <provider> <model>` — sets `provider.name`/`provider.model` after validating the pair against pi-ai.
+- `zdr config-escalation <backend> <model> [--provider <name>]` / `zdr config-escalation --clear` — sets or removes the escalation tier (backend: `pi` | `claude`).
+- `zdr doctor` — read-only local setup report as JSON. Never makes a live provider call.
+- `zdr benchmark-provider [query] [--repeat <count>] [--provider <p> --model <m>] [--jsonl]` — opt-in live benchmark; repeat count capped to avoid accidental spend.
+- `zdr benchmark-suite [query] [--repeat <count>] [--jsonl]` — same context across provider/model pairs; defaults to the configured provider only.
 
-`zdr doctor` is a read-only local setup report. It must not make a live provider call. It reports config load status, provider/model lookup, provider auth readiness, required/optional command availability, and ZDR's config/auth/state/cache/telemetry paths.
+### 8.2 Claude escalation backend
 
-`zdr benchmark-provider [query] --repeat <count>` is an opt-in live-provider benchmark. It reuses one candidate context, repeats provider selection, and reports latency, usage, cost, selected-path consistency, and the effective provider/model. `--provider` and `--model` may override the configured provider for that benchmark run only. Repeat count is capped to avoid accidental spend.
-
-`zdr benchmark-suite [query] --repeat <count>` runs the same benchmark context across provider/model pairs. By default it tests only the configured provider so the diagnostic does not fail because optional providers are unavailable. Additional `--provider provider:model` arguments replace the default suite for explicit comparisons.
-
-Provider benchmark commands support `--jsonl` for long-running diagnostics. JSONL mode emits one event per line: context first, iteration results as provider calls finish, and summary events at the end.
-
-### 8.2 Reasoning toggle
-
-Use model-specific reasoning controls only where the chosen provider/model supports them. First calls should prefer low latency. Second-call escalation may enable stronger reasoning if supported.
+The `claude` escalation backend runs through `@anthropic-ai/claude-agent-sdk` on the user's Claude Pro/Max subscription. `ANTHROPIC_API_KEY` and `ANTHROPIC_AUTH_TOKEN` are stripped from the environment so the local `claude` login is used deliberately. Requires `claude` on PATH and logged in. Recommended setup: `zdr config-escalation claude sonnet`.
 
 ### 8.3 Fallback strategy
 
-No fallback chain in v0.1. On HTTP error or timeout (>5s default), fail cleanly and let the user stay where they are.
+No fallback chain. On provider error or timeout (10s), fail cleanly and let the user stay where they are.
 
 ## 9. Shell Integration
 
-Installed via `zdr init <shell>` (mirrors `zoxide init`). For zsh:
+Installed via `zdr init <shell>`, after `zoxide init`. Supported: zsh, bash, fish. The integration:
 
-```bash
-# zdr shell function
-zdr() {
-  local target
-  target=$(command zdr "$@") && [ -n "$target" ] && cd "$target"
-}
-
-# zoxide recording wrapper (shape only; exact function depends on shell)
-z() {
-  local before="$PWD"
-  command zdr record-z --before "$before" -- "$@"
-  __zoxide_z "$@"
-  local status=$?
-  command zdr finish-z --status "$status" --after "$PWD"
-  return "$status"
-}
-
-# Recovery retry hook
-_zdr_preexec() {
-  case "$1" in
-    zdr) ;;                                        # keep retry state only for no-arg recovery retry
-    *)
-      local retry="${XDG_STATE_HOME:-$HOME/.local/state}/zdr/recovery_retry.json"
-      [[ -e "$retry" ]] && rm -f "$retry"
-      ;;
-  esac
-}
-preexec_functions+=(_zdr_preexec)   # zsh syntax; bash uses DEBUG trap
-```
+- saves the existing zoxide `z` function and wraps it: `zdr record-z` before the jump, `zdr finish-z` (with exit status and landing pwd) after, preserving `z` behavior and exit code;
+- defines the `zdr` function that `cd`s to the printed target (internal/diagnostic subcommands pass through);
+- installs a preexec hook that deletes `recovery_retry.json` on any command that is not no-arg `zdr` (§5.1).
 
 ## 10. Correction Memory
 
@@ -324,88 +282,82 @@ Lookup flow for `zdr <query>`:
 3. If miss → LLM call, return the selected path on success.
 4. Store high-confidence direct-query model selections for future exact-query cache hits.
 
-This cache is not zoxide training and should not boost frecency scores. It is personal correction memory for exact direct-query aliases like `ascan -> ~/dev/agentscan`.
+`zdr forget <query>` removes one entry. This cache is not zoxide training and never boosts frecency scores. It is personal correction memory for exact aliases like `ascan -> ~/dev/agentscan`.
 
-The implementation should treat correction memory as zdr-owned shell-side state, not as a mutation of zoxide's frecency database.
+### 10.2 Recovery alias memory
 
-### 10.2 Recovery-mode alias suggestions
+Implemented. Recovery mode stores successful repairs into the same `corrections.json`:
 
-Recovery mode may notice that a failed `z` query repeatedly resolves to the same directory. For example, if `z ascan` fails and `zdr` consistently resolves it to `~/dev/agentscan`, zdr can optionally suggest adding a personal correction:
+- Model selections with confidence >= 0.75 and all picker selections are remembered.
+- On a later recovery of the same query, the remembered target is injected as the top candidate — even if it is absent from the zoxide DB and local scan.
+- A rejected suggestion (user runs `zdr` again) evicts its entry.
+- Correction-cache failures never break navigation; they warn on stderr and continue.
 
-```text
-remember ascan -> ~/dev/agentscan? [y/N]
-```
-
-This should be opt-in and out of scope for v0.1. The initial implementation only records high-confidence direct-query `zdr <query>` resolutions.
-
-**Status:** A non-interactive form of recovery alias memory is now implemented. Recovery stores high-confidence (>= 0.75) and picker resolutions into the same `corrections.json` cache, injects a remembered target as the top candidate on later recoveries of the same query (surviving absence from zoxide), and evicts a remembered target the user rejects. The interactive `remember … ? [y/N]` prompt above remains future work.
+An interactive `remember ascan -> ~/dev/agentscan? [y/N]` prompt remains future work (§13).
 
 ## 11. Configuration
 
-File: `$XDG_CONFIG_HOME/zdr/config.toml`
+File: `$XDG_CONFIG_HOME/zdr/config.json` (default `~/.config/zdr/config.json`). JSON, strict schema — unknown keys are rejected. All fields except `escalation` have defaults; a missing file means defaults.
 
-```toml
-[providers]
-primary = "openrouter"
-
-[providers.openrouter]
-api_key_env = "OPENROUTER_API_KEY"
-model = "google/gemini-2.5-flash-lite"
-
-[model_framework]
-name = "pi-ai"
-package = "@earendil-works/pi-ai"
-
-[runtime]
-name = "bun"
-compile = true
-target = "standalone executable"
-
-[behavior]
-timeout_seconds = 5
-zoxide_db_top_n = 50
-local_scan_roots = ["~/code", "~/dev"]
-local_scan_depth = 3
-local_scan_max_dirs = 200
-last_z_state = "~/.local/state/zdr/last_z.json"
-recovery_retry_state = "~/.local/state/zdr/recovery_retry.json"
-correction_cache = "~/.cache/zdr/corrections.json"
-
-[reasoning]
-first_call = "off"
-second_call = "high"
+```json
+{
+  "schema_version": 1,
+  "provider": {
+    "name": "openai-codex",
+    "model": "gpt-5.6-terra"
+  },
+  "privacy": {
+    "redact_home": true,
+    "redact_emails": true,
+    "redact_secrets": true,
+    "redact_tokens": true
+  },
+  "context": {
+    "default_dir": "~",
+    "include_dirs": [],
+    "exclude_dirs": []
+  },
+  "telemetry": {
+    "enabled": false,
+    "max_events": 1000
+  },
+  "escalation": {
+    "backend": "claude",
+    "model": "sonnet"
+  }
+}
 ```
+
+`escalation.backend` is `pi` or `claude`; the `pi` backend takes an optional `name` (provider name, defaults to `provider.name`), while `claude` forbids it. Edit via `zdr config-provider` and `zdr config-escalation` rather than by hand. Telemetry is opt-in and strictly local (`$XDG_STATE_HOME/zdr/events.jsonl`).
 
 ## 12. File Layout
 
 ```
-zdr/
-├── cli            # entry, arg/mode dispatch
-├── provider       # Pi provider/model SDK setup
-├── context        # zoxide DB, candidate scoring, local scans, git state
-├── prompt         # template + JSON output parsing
-├── shell_state    # last z attempt read/write
-├── retry          # recovery retry state, rejected-path tracking
-├── cache          # correction memory for direct-query mode
-├── fzf            # 3rd-strike picker
-├── init           # zdr init <shell> command
-└── config         # TOML config loader
+src/
+├── cli.ts, cli-args.ts       # entry, arg/mode dispatch
+├── recovery.ts               # no-arg recovery flow + escalation ladder
+├── direct-query.ts           # zdr <query> + correction cache gate
+├── candidates.ts, local-scan.ts, zoxide.ts, selection-context.ts
+├── prompt.ts                 # template + JSON output parsing
+├── provider/                 # pi backend, claude backend, auth store, codex-identity shim
+├── shell-state.ts, shell-init.ts, shell-commands.ts
+├── corrections.ts            # correction memory
+├── picker.ts                 # fzf 3rd-strike picker
+├── config.ts, telemetry.ts, diagnostics.ts, benchmark.ts
+└── eval/                     # 50-case selection eval suite (offline + live runners)
 ```
+
+Eval runners: `bun scripts/run-evals.ts` (offline recall, free); live runs require `ZDR_EVAL_LIVE=1` plus `--live --backend pi:<provider>:<model>` or `claude:<model>`. `bun scripts/telemetry-to-cases.ts` mines opt-in telemetry into case skeletons.
 
 ## 13. Open Questions / Future Work
 
-- **Shell integration mechanics**: zsh first. Decide whether `zdr init zsh` wraps an existing zoxide function or initializes zoxide under the hood with a private command name.
-- **Multi-shell support**: zsh first, then bash, then fish.
-- **Privacy mode**: expand the default home/user redaction with optional denylist regexes.
-- **Telemetry**: opt-in success/failure logging to `$XDG_DATA_HOME/zdr/log.jsonl` would make it possible to evaluate prompt changes against a real workload. Strictly local.
-- **Embedding-based offline fallback**: long-term, a small local embedding model could handle the easy cases (`ascan` → `agentscan`) without a network call at all. Out of scope for v1.
-- **Pi dependency freshness**: local upstream checkout is currently `~/code/upstream/pi-mono`; the current repository is `https://github.com/earendil-works/pi`. Before implementation, update/repoint local references and verify the published package/API shape under Bun.
-- **Distribution**: Homebrew tap + install script for a Bun-compiled standalone executable.
+- **Privacy mode**: expand the default redaction with optional denylist regexes.
+- **Interactive alias prompt**: the `remember ascan -> ...? [y/N]` flow from §10.2.
+- **Embedding-based offline fallback**: a small local model could handle easy cases (`ascan` → `agentscan`) without a network call.
+- **Homebrew tap**: `bun run release:prepare` generates `Formula/zoxide-doctor.rb`; copying it into a tap repo is pending.
+- **Upstream pi-ai patch**: codex client-identity support (draft in `docs/upstream/`, tracked in ROADMAP.md).
+- **Prompt caching**: closed for now (§7.4); revisit if the candidate cap grows.
 
 ## 14. Versioning
 
-v0.1 — Bun TypeScript CLI + zsh recovery mode + recorded `z` attempts + Pi provider SDK + OpenRouter default + bounded candidate prompt.
-v0.2 — direct-query mode (`zdr <query>`) + correction cache.
-v0.3 — fzf 3rd-strike fallback + 2nd-call reasoning escalation.
-v0.4 — prompt-cache telemetry + cost/latency logging.
-v1.0 — config file, multi-shell init, docs.
+v0.2.0 is current, tagged, and published: release archives + SHA256SUMS built by GitHub Actions, installable via `scripts/install.sh`. Everything above describes shipped behavior except items in §13.

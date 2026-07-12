@@ -1,6 +1,6 @@
 # Privacy
 
-Zoxide Doctor sends only model-selection context to the configured provider. Shell navigation state, correction memory, and telemetry are stored locally.
+Zoxide Doctor sends only model-selection context to the configured provider — and, when an escalation tier is configured, the same redacted context to that backend. Shell navigation state, correction memory, and telemetry are stored locally.
 
 On a correction-cache miss, provider context can include zoxide-ranked candidate paths and bounded local directory scan results from the configured context roots. The default context root is `~`; use `context.include_dirs` and `context.exclude_dirs` when you need to broaden or narrow the scan scope.
 
@@ -27,6 +27,10 @@ These settings live in the v1 config:
 ```
 
 See [Configuration](config.md) for the full config shape.
+
+## Credentials
+
+Subscription OAuth tokens from `zdr provider-login` are stored in `$XDG_CONFIG_HOME/zdr/auth.json` (fallback `~/.config/zdr/auth.json`) with file mode 0600. When the Pi CLI already has a matching login, zdr imports it read-only from `~/.pi/agent/auth.json` (override with `PI_CODING_AGENT_DIR`). zdr never writes the Pi file.
 
 ## Local State
 

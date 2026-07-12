@@ -15,50 +15,15 @@ The intended workflow is:
 
 Direct lookup with `zdr <query>` is available as an experimental shortcut, but the primary product is no-arg `zdr` after a bad `z` jump.
 
-## Status
-
-This repository is in pre-release implementation.
-
-Implemented:
-
-- zsh, bash, and fish shell integration.
-- no-arg recovery for the last bad `z` jump.
-- repeated no-arg recovery that excludes prior bad `zdr` suggestions.
-- third-attempt `fzf` picker fallback over zoxide candidates plus optional `fd` scan results.
-- direct lookup with `zdr <query>`.
-- local correction cache for direct-query hits.
-- local opt-in telemetry and provider usage accounting.
-- OAuth login for Pi OAuth providers such as `openai-codex`.
-- strict v1 config with provider, privacy, context, and telemetry settings.
-- curl-based release installer.
-
-Not implemented yet:
-
-- Homebrew install channel.
-
 ## Install
 
 Prerequisites:
 
-- [Bun](https://bun.sh/)
 - [zoxide](https://github.com/ajeetdsouza/zoxide)
 - zsh, bash, or fish
 - A ChatGPT Plus/Pro login for the default provider (`zdr provider-login openai-codex`), or an API key such as `OPENROUTER_API_KEY` for an env-key provider
 
-Build the standalone executable:
-
-```bash
-bun install
-bun run build
-```
-
-Install a dev build into `~/.local/bin`:
-
-```bash
-bun run install:dev
-```
-
-After a tagged release is published, install the latest release into `~/.local/bin`:
+Install the latest release into `~/.local/bin`:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/aurokin/zoxide-doctor/main/scripts/install.sh | sh
@@ -67,12 +32,22 @@ curl -fsSL https://raw.githubusercontent.com/aurokin/zoxide-doctor/main/scripts/
 Install a specific release or directory:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/aurokin/zoxide-doctor/main/scripts/install.sh | sh -s -- --version 0.1.0 --dir "$HOME/bin"
+curl -fsSL https://raw.githubusercontent.com/aurokin/zoxide-doctor/main/scripts/install.sh | sh -s -- --version 0.2.0 --dir "$HOME/bin"
+```
+
+A Homebrew tap is planned but not available yet.
+
+Or build from source (requires [Bun](https://bun.sh/)):
+
+```bash
+bun install
+bun run build        # standalone executable in dist/
+bun run install:dev  # install a dev build into ~/.local/bin
 ```
 
 The executable alone only prints the target path. The shell integration is what turns that path into `cd`, so source `zdr init <shell>` after zoxide init.
 
-Log in to the default provider. Zoxide Doctor ships with `openai-codex` / `gpt-5.6-terra` (low reasoning effort), which uses a ChatGPT Plus/Pro subscription login rather than an API key:
+Log in to the default provider. Zoxide Doctor ships with `openai-codex` / `gpt-5.6-terra` (minimal reasoning effort), which uses a ChatGPT Plus/Pro subscription login rather than an API key:
 
 ```bash
 zdr provider-login openai-codex
@@ -90,17 +65,19 @@ zdr config-provider openrouter google/gemini-2.5-flash-lite
 `config-provider` writes `provider.name` and `provider.model` in `~/.config/zdr/config.json`.
 Use `zdr provider-list` to list Pi providers and OAuth support. Use `zdr provider-list <provider>` to print that provider's known model IDs.
 
+Recommended: point the escalation tier (second `zdr` attempt) at your Claude Pro/Max subscription (see [Subscriptions](#subscriptions)):
+
+```bash
+zdr config-escalation claude sonnet
+```
+
 Verify local setup:
 
 ```bash
 zdr --version
 zdr doctor
+zdr provider-discover
 zdr provider-smoke
-zdr provider-list openai-codex
-zdr benchmark-provider ascan --repeat 5
-zdr benchmark-provider ascan --repeat 5 --provider openai-codex --model gpt-5.3-codex-spark
-zdr benchmark-suite ascan
-zdr benchmark-suite ascan --jsonl
 ```
 
 See [Configuration](docs/config.md) for provider, privacy, and context tuning. See [Provider recommendations](docs/provider-recommendations.md) for dated benchmark notes before changing provider/model defaults.
@@ -162,7 +139,7 @@ z ascan
 zdr
 ```
 
-First no-arg recovery requests minimal reasoning effort through Pi when the configured model/provider supports reasoning controls. If the first repair is also wrong, run `zdr` again. The second no-arg recovery excludes the previous `zdr` suggestion and requests high reasoning effort. Unsupported models ignore those options through Pi.
+First no-arg recovery runs the fast tier: the configured provider at minimal reasoning effort (models without reasoning controls ignore it). If the first repair is wrong, run `zdr` again. The second recovery excludes the previous `zdr` suggestion and runs the escalation tier if one is configured (`zdr config-escalation claude sonnet`); otherwise it reuses the fast provider with high reasoning effort.
 
 If the second repair is wrong too, run `zdr` a third time. The third recovery opens an `fzf` picker seeded with the original query, zoxide-ranked candidates, and optional `fd` scan results from the configured context roots.
 

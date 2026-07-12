@@ -5,11 +5,14 @@
 ```bash
 zdr --version
 zdr doctor
+zdr provider-discover
 zdr provider-smoke
 zdr debug-config
 ```
 
 `zdr doctor` is a local JSON setup report. It checks config loading, provider/model lookup, provider auth readiness, `zoxide`, optional picker tools, and the paths ZDR uses for config, auth, state, cache, and telemetry.
+
+`zdr provider-discover` is the first diagnostic for auth problems. It makes no model calls and reports whether each backend is ready: `claude` on PATH and logged in, an `openai-codex` login in ZDR's store, the Pi shared store, or `~/.codex/auth.json`, and which env keys are set. It ends with a fast/escalation tier summary.
 
 Run a live provider check:
 
@@ -17,19 +20,17 @@ Run a live provider check:
 zdr provider-smoke --live
 ```
 
-For the default OpenRouter provider, live provider calls require:
+The default `openai-codex` provider uses a ChatGPT Plus/Pro login, not an API key:
+
+```bash
+zdr provider-login openai-codex
+zdr provider-auth-status
+```
+
+Env-key providers need their key exported first:
 
 ```bash
 export OPENROUTER_API_KEY=...
-```
-
-For OAuth providers, check auth status:
-
-```bash
-zdr provider-auth-status
-zdr provider-list openai-codex
-zdr provider-login openai-codex
-zdr config-provider openai-codex gpt-5.3-codex-spark
 ```
 
 `provider-smoke --live` reports when an OAuth provider is configured but credentials are missing.
@@ -69,17 +70,27 @@ This requires `zoxide` to be installed and populated:
 zdr debug-candidates --limit 10
 ```
 
-Run a live model selection against those candidates:
-
-```bash
-OPENROUTER_API_KEY=... zdr debug-select --limit 10
-```
-
-For an OAuth provider, omit the env var after login:
+Run a live model selection against those candidates (needs provider auth, see above):
 
 ```bash
 zdr debug-select --limit 10
 ```
+
+## Provider Errors
+
+Failed selections surface the provider response in the `zdr:` error message:
+
+- `provider returned an error: ...` — the provider rejected the request. The message is a redacted, length-capped preview of the upstream error.
+- `response was truncated before completing JSON (hit max tokens)` — the model spent its output budget (usually on hidden reasoning) before emitting the JSON answer. Retry; if it persists on a custom model, pick a different one.
+
+## Claude Escalation
+
+The escalation tier with `"backend": "claude"` needs Claude Code installed and logged in:
+
+- `claude executable not found on PATH` — install Claude Code.
+- `claude selection failed: ...` — run `claude` once and log in. ZDR strips `ANTHROPIC_API_KEY` and `ANTHROPIC_AUTH_TOKEN` from the SDK call, so an exported API key does not substitute for the subscription login.
+
+`zdr provider-discover` shows Claude readiness without spending tokens.
 
 ## Correction Cache
 
@@ -97,6 +108,8 @@ zdr forget ascan
 ```
 
 Correction memory is separate from zoxide and does not change zoxide frecency scores.
+
+Recovery alias memory shares this cache: picker selections and high-confidence repairs are remembered and injected as the top candidate on later recoveries of the same query. Rejecting a remembered target evicts it. Cache read/write failures are warnings only and never block navigation.
 
 ## Picker Fallback
 

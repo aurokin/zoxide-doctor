@@ -54,7 +54,7 @@ zdr debug-timing ascan
 zdr debug-timing ascan --budget-ms 150
 zdr debug-provider-timing ascan
 zdr benchmark-provider ascan --repeat 5
-zdr benchmark-provider ascan --repeat 5 --provider openai-codex --model gpt-5.3-codex-spark
+zdr benchmark-provider ascan --repeat 5 --provider openai-codex --model gpt-5.6-terra
 zdr benchmark-suite ascan
 zdr benchmark-suite ascan --jsonl
 ```
@@ -70,3 +70,12 @@ zdr benchmark-suite ascan --jsonl
 `--jsonl` streams benchmark output as line-delimited JSON. It emits a context event first, iteration events as provider calls finish, and summary events at the end.
 
 When telemetry is enabled, direct-query and no-arg recovery modes record JSONL events for cache hits, model selections, picker outcomes, no-selections, and errors. Provider-backed model events include Pi usage data plus flattened token, prompt-cache, and cost fields when Pi exposes them.
+
+## Mining Events into Eval Cases
+
+```bash
+bun scripts/telemetry-to-cases.ts
+bun scripts/telemetry-to-cases.ts --file /path/to/events.jsonl
+```
+
+This mines the local telemetry log into eval case skeletons, printed as JSON to stdout, one per distinct query, for curation into `src/eval/cases.ts`. It reads only the local JSONL log (or a `--file` export) and sends nothing anywhere.

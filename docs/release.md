@@ -1,6 +1,6 @@
 # Release Process
 
-Release archives are built by GitHub Actions when a `vX.Y.Z` tag matching `package.json` is pushed.
+Release archives are built by GitHub Actions when a `vX.Y.Z` tag matching `package.json` is pushed. The current release is `v0.2.0`.
 
 Each release includes Bun-compiled `zdr` archives for:
 
@@ -30,10 +30,10 @@ curl -fsSL https://raw.githubusercontent.com/aurokin/zoxide-doctor/main/scripts/
 Install a specific version or directory:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/aurokin/zoxide-doctor/main/scripts/install.sh | sh -s -- --version 0.1.0 --dir "$HOME/bin"
+curl -fsSL https://raw.githubusercontent.com/aurokin/zoxide-doctor/main/scripts/install.sh | sh -s -- --version 0.2.0 --dir "$HOME/bin"
 ```
 
-Homebrew is not implemented yet.
+Homebrew install is not available yet: the formula is generated (see below), but it has not been copied into the tap.
 
 ## Homebrew Formula
 

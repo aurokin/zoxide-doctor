@@ -106,7 +106,7 @@ Paths may be absolute or use `~`. Relative paths are resolved from the current w
 Provider-backed selection, `provider-smoke`, and provider timing diagnostics use `provider.name` and `provider.model`.
 
 - The default provider is `openai-codex` (ChatGPT Plus/Pro via `zdr provider-login openai-codex`).
-- The default model is `gpt-5.6-terra`, sent at low reasoning effort on the fast path.
+- The default model is `gpt-5.6-terra`, sent at minimal reasoning effort on the fast path (see [OAuth Providers](#oauth-providers) for the Codex `low` mapping).
 - `provider.name` must be a provider known to Pi (`@earendil-works/pi-ai`).
 - `provider.model` must be one of Pi's known model IDs for that provider.
 - `zdr provider-list` lists Pi providers, model counts, and OAuth support.
@@ -114,7 +114,7 @@ Provider-backed selection, `provider-smoke`, and provider timing diagnostics use
 - `zdr provider-smoke` checks provider/model lookup without making a network call.
 - `zdr provider-smoke --live` makes a tiny completion request and requires the provider's API key or OAuth login.
 
-The default `openai-codex` provider uses a ChatGPT Plus/Pro login (`zdr provider-login openai-codex`) rather than an API key. Env-key providers such as OpenRouter are the alternative:
+Env-key providers such as OpenRouter are the alternative to the default OAuth login:
 
 ```bash
 export OPENROUTER_API_KEY=...
@@ -144,30 +144,11 @@ Log out:
 zdr provider-logout openai-codex
 ```
 
-OpenAI Codex via ChatGPT Pro or Plus is the default provider and can be configured with:
-
-```bash
-zdr provider-login openai-codex
-zdr config-provider openai-codex gpt-5.6-terra
-```
-
-Equivalent JSON:
-
-```json
-{
-  "schema_version": 1,
-  "provider": {
-    "name": "openai-codex",
-    "model": "gpt-5.6-terra"
-  }
-}
-```
-
 For `openai-codex`, ZDR passes Pi's Codex Responses options, omits unsupported `temperature`, and requests minimal reasoning for first-attempt selection unless a retry asks for stronger reasoning. For gpt-5.6 models (terra/luna/sol), Pi's catalog maps `minimal` to server reasoning effort `low`, so the fast path runs terra at low effort.
 
 ## Escalation Tier
 
-Recovery has three attempts: a fast first attempt (minimal reasoning), a "thinking harder" second attempt (high reasoning), and an `fzf` picker on the third. The optional top-level `escalation` block routes the second attempt to a different backend so you can spend a slower, stronger model only when the first repair was rejected.
+Recovery has three attempts: a fast first attempt (minimal reasoning), a "thinking harder" second attempt (high reasoning), and an `fzf` picker on the third. The optional top-level `escalation` block routes the second attempt to a different backend so you can spend a slower, stronger model only when the first repair was rejected. The escalation backend receives the same redacted selection context as the fast tier — the `privacy` settings apply to both.
 
 When `escalation` is absent, the second attempt keeps today's behavior: the same provider as the fast tier with high reasoning.
 
@@ -199,7 +180,7 @@ Rules:
 
 - `backend` is optional and defaults to `pi`; it must be `pi` or `claude`.
 - `model` is required and non-empty. For `claude` it is a model alias or id (`haiku`, `sonnet`, ...); for `pi` it is a Pi model id.
-- `name` is the Pi provider name. It is required when `backend` is `pi` (defaulting to the fast-tier `provider.name`) and is rejected when `backend` is `claude`.
+- `name` is the Pi provider name, used only when `backend` is `pi`. It defaults to the fast-tier `provider.name` and is rejected when `backend` is `claude`.
 
 ### Claude Subscription Backend
 
@@ -216,4 +197,4 @@ Rules:
 
 ## Pi Shared Auth Import
 
-When ZDR's own store (`~/.config/zdr/auth.json`) has no credential for an OAuth provider, it attempts a read-only import from the Pi CLI store at `~/.pi/agent/auth.json`, validates the shape, copies it into ZDR's store, and then refreshes it through the normal OAuth path. ZDR never writes to the Pi CLI's file. Set `PI_CODING_AGENT_DIR` to override the Pi agent directory.
+When ZDR's own store (`~/.config/zdr/auth.json`) has no credential for an OAuth provider, it attempts a read-only import from the Pi CLI store at `~/.pi/agent/auth.json`, validates the shape, copies it into ZDR's store, and then refreshes it through the normal OAuth path. If a stored credential stops working, ZDR re-imports from the Pi store. ZDR never writes to the Pi CLI's file. Set `PI_CODING_AGENT_DIR` to override the Pi agent directory.
