@@ -43,7 +43,7 @@ Prerequisites:
 - [Bun](https://bun.sh/)
 - [zoxide](https://github.com/ajeetdsouza/zoxide)
 - zsh, bash, or fish
-- `OPENROUTER_API_KEY` for the default model-backed recovery path, or OAuth login for an OAuth provider
+- A ChatGPT Plus/Pro login for the default provider (`zdr provider-login openai-codex`), or an API key such as `OPENROUTER_API_KEY` for an env-key provider
 
 Build the standalone executable:
 
@@ -72,20 +72,22 @@ curl -fsSL https://raw.githubusercontent.com/aurokin/zoxide-doctor/main/scripts/
 
 The executable alone only prints the target path. The shell integration is what turns that path into `cd`, so source `zdr init <shell>` after zoxide init.
 
-Set the provider API key. The default OpenRouter provider uses `OPENROUTER_API_KEY`:
-
-```bash
-export OPENROUTER_API_KEY=...
-```
-
-Optional ChatGPT Pro/Codex Spark path:
+Log in to the default provider. Zoxide Doctor ships with `openai-codex` / `gpt-5.6-terra` (low reasoning effort), which uses a ChatGPT Plus/Pro subscription login rather than an API key:
 
 ```bash
 zdr provider-login openai-codex
-zdr config-provider openai-codex gpt-5.3-codex-spark
 ```
 
-This writes `provider.name` and `provider.model` in `~/.config/zdr/config.json`.
+The default already targets `gpt-5.6-terra`; use `zdr config-provider openai-codex <model>` to pin a different Codex model.
+
+Alternative: an env-key provider such as OpenRouter:
+
+```bash
+export OPENROUTER_API_KEY=...
+zdr config-provider openrouter google/gemini-2.5-flash-lite
+```
+
+`config-provider` writes `provider.name` and `provider.model` in `~/.config/zdr/config.json`.
 Use `zdr provider-list` to list Pi providers and OAuth support. Use `zdr provider-list <provider>` to print that provider's known model IDs.
 
 Verify local setup:
@@ -102,6 +104,26 @@ zdr benchmark-suite ascan --jsonl
 ```
 
 See [Configuration](docs/config.md) for provider, privacy, and context tuning. See [Provider recommendations](docs/provider-recommendations.md) for dated benchmark notes before changing provider/model defaults.
+
+## Subscriptions
+
+Run recovery on subscriptions you already pay for instead of API keys.
+
+- **Claude escalation tier.** Repairs escalate to "thinking harder" on the second attempt. Point that tier at your Claude Pro/Max subscription through the local `claude` login (never an API key):
+
+  ```bash
+  zdr config-escalation claude sonnet
+  ```
+
+  This uses the Claude Agent SDK against the `claude` executable on your PATH. It runs only on the escalation tier because subscription calls are slower than the fast first-attempt path. Install Claude Code and run `claude` once to log in. Remove the tier with `zdr config-escalation --clear`.
+
+- **Pi shared auth import.** If you already logged in to an OAuth provider (such as `openai-codex`) with the Pi CLI, ZDR imports that credential read-only from `~/.pi/agent/auth.json` on first use, copies it into its own store, and refreshes it normally. It never writes to the Pi CLI's file. Override the Pi directory with `PI_CODING_AGENT_DIR`.
+
+- **Discover what's available.** `zdr provider-discover` reports, read-only and without model spend, which fast and escalation tiers are satisfied by your current logins and environment:
+
+  ```bash
+  zdr provider-discover
+  ```
 
 ## Shell Setup
 

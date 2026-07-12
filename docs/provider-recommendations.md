@@ -1,8 +1,34 @@
 # Provider Recommendations
 
-As of 2026-05-23.
-
 Provider latency, routing, model catalogs, and pricing change frequently. Treat this page as a dated snapshot, not a permanent ranking. Re-run the benchmark commands below before changing defaults or making release notes that depend on provider performance.
+
+## 2026-07-12 (current)
+
+50-case adversarial eval. `pi:openai-codex:gpt-5.6-terra` at low reasoning effort is the shipped fast-tier default; `claude:sonnet` (subscription) is the recommended escalation tier.
+
+Set the recommended escalation with:
+
+```bash
+zdr config-escalation claude sonnet
+```
+
+| Backend | Accuracy | Errors | p50 / p95 | Notes |
+|---|---|---|---|---|
+| pi:openai-codex:gpt-5.6-terra (low) | 90% | 0 | 1.43s / 3.6s | NEW DEFAULT (fast tier) |
+| pi:openai-codex:gpt-5.6-luna (low) | 88% | 0 | 1.75s / 4.5s | needs codex client identity (see codex-identity.ts) |
+| pi:openai-codex:gpt-5.6-sol (low) | 88% | 1 timeout | 1.77s / 5.4s | |
+| pi:cerebras:gpt-oss-120b | 88% | 1 | 287ms / 712ms | fastest tested; API key required |
+| claude:sonnet (subscription) | 88% | 0 | 3.2s / 7.7s | RECOMMENDED ESCALATION; best abbreviation (80%) |
+| claude:haiku (subscription) | 88% | 0 | 6.3s / 17.2s | dominated by sonnet |
+| pi:openai-codex:gpt-5.3-codex-spark | 84% | 0 | 1.36s / 4.3s | previous best subscription option; 20% abbreviation |
+| pi:groq:llama-3.3-70b-versatile | 48%* | 23 | 325ms / 464ms | *free-tier TPM 429s mid-run; accuracy-on-success much higher |
+| pi:groq:llama-3.1-8b-instant | 10% | 43 | 408ms | ignores JSON-only instruction; unusable |
+
+Method: 50-case adversarial corpus (`src/eval/`), categories abbreviation/initialism/typo/ambiguous-siblings/monorepo-package/wrong-landing/stale-decoy/escalation/no-answer/multi-word, run via `ZDR_EVAL_LIVE=1 bun scripts/run-evals.ts --live --backend <spec>`. Known shared weaknesses: abbreviation ceiling ~60% on all fast-tier models (sonnet 80%); all models miss esc-api/esc-auth/none-payroll (labels under review). Recommended escalation config: `zdr config-escalation claude sonnet`.
+
+## 2026-05-23 (superseded)
+
+> Superseded by the 2026-07-12 section above. The `cerebras llama3.1-8b` model recommended here no longer exists in the Pi catalog. Kept for historical reference.
 
 Benchmarks on this page used the `ascan` direct-query task with 50 candidates and selected `/Users/auro/code/agentscan` as the expected path.
 
